@@ -9,8 +9,9 @@ impl Editor {
         let (cursor_row, cursor_col) = self.cursor();
         let line_count = self.buffer.line_count();
         let effective_scrolloff = self.scrolloff.min(view_height / 2);
-        if cursor_row < self.scroll_offset + effective_scrolloff {
-            self.scroll_offset = cursor_row.saturating_sub(effective_scrolloff);
+        self.scroll_offset = self.normalize_scroll_row(self.scroll_offset);
+        if cursor_row < self.scroll_offset || self.visible_row_distance(self.scroll_offset, cursor_row) < effective_scrolloff {
+            self.scroll_offset = self.visible_row_at_offset(cursor_row, -(effective_scrolloff as isize));
         }
         if self.line_wrap_enabled && self.view_width > 0 {
             let (cursor_visual_offset, _) = self.cursor_wrapped_position();
@@ -20,13 +21,18 @@ impl Editor {
                 if total_lines + effective_scrolloff <= view_height {
                     break;
                 }
-                self.scroll_offset += 1;
+                let Some(next) = self.next_visible_row(self.scroll_offset) else { break };
+                self.scroll_offset = next;
             }
-        } else if cursor_row + effective_scrolloff >= self.scroll_offset + view_height {
-            self.scroll_offset = cursor_row.saturating_add(effective_scrolloff).saturating_sub(view_height.saturating_sub(1));
+        } else {
+            let cursor_distance = self.visible_row_distance(self.scroll_offset, cursor_row);
+            if cursor_distance + effective_scrolloff >= view_height {
+                let advance = cursor_distance + effective_scrolloff - view_height.saturating_sub(1);
+                self.scroll_offset = self.visible_row_at_offset(self.scroll_offset, advance as isize);
+            }
         }
         let max_scroll = line_count.saturating_sub(1);
-        self.scroll_offset = self.scroll_offset.min(max_scroll);
+        self.scroll_offset = self.normalize_scroll_row(self.scroll_offset.min(max_scroll));
         if self.view_width > 0 {
             let effective_width = self.view_width.saturating_sub(1);
             if cursor_col < self.h_scroll_offset {
@@ -37,6 +43,9 @@ impl Editor {
         }
     }
     pub(super) fn visual_lines_for_row(&self, row: usize, content_width: usize) -> usize {
+        if self.is_row_hidden(row) {
+            return 0;
+        }
         let line = match self.buffer.line(row) {
             Some(l) => l,
             None => return 1,
@@ -66,8 +75,12 @@ impl Editor {
         let content_x_offset = self.content_x_offset() as usize;
         let content_width = self.view_width.saturating_sub(content_x_offset).saturating_sub(self.right_padding as usize).max(1);
         let mut visual_lines = 0;
-        for row in start_row..=end_row.min(self.buffer.line_count().saturating_sub(1)) {
+        let end_row = end_row.min(self.buffer.line_count().saturating_sub(1));
+        let mut row = self.normalize_scroll_row(start_row);
+        while row <= end_row {
             visual_lines += self.visual_lines_for_row(row, content_width);
+            let Some(next_row) = self.next_visible_row(row) else { break };
+            row = next_row;
         }
         visual_lines
     }
@@ -82,7 +95,7 @@ impl Editor {
     }
 
     pub fn set_scroll_offset(&mut self, offset: usize) {
-        self.scroll_offset = offset;
+        self.scroll_offset = self.normalize_scroll_row(offset);
     }
 
     pub fn h_scroll_offset(&self) -> usize {
@@ -241,6 +254,9 @@ impl Editor {
         (visual_line.saturating_sub(1), 0)
     }
     pub fn line_wrapped_height(&self, row: usize) -> usize {
+        if self.is_row_hidden(row) {
+            return 0;
+        }
         let content_x_offset = self.content_x_offset() as usize;
         let content_width = self.view_width.saturating_sub(content_x_offset).saturating_sub(self.right_padding as usize);
         if content_width == 0 {
@@ -261,7 +277,7 @@ impl Editor {
     pub fn center_cursor(&mut self) {
         let (cursor_row, _) = self.cursor();
         let half_height = self.view_height / 2;
-        self.scroll_offset = cursor_row.saturating_sub(half_height);
+        self.scroll_offset = self.visible_row_at_offset(cursor_row, -(half_height as isize));
     }
 
     /// Scroll so cursor line is at top of screen (zt command)
@@ -273,7 +289,7 @@ impl Editor {
     /// Scroll so cursor line is at bottom of screen (zb command)
     pub fn scroll_cursor_to_bottom(&mut self) {
         let (cursor_row, _) = self.cursor();
-        self.scroll_offset = cursor_row.saturating_sub(self.view_height.saturating_sub(1));
+        self.scroll_offset = self.visible_row_at_offset(cursor_row, -(self.view_height.saturating_sub(1) as isize));
     }
 
     pub fn set_view_size(&mut self, width: usize, height: usize) {
@@ -294,7 +310,7 @@ impl Editor {
 
     pub fn visual_to_logical_coords(&self, visual_y: usize, visual_x: usize) -> (usize, usize) {
         if !self.line_wrap_enabled || self.view_width == 0 {
-            let row = visual_y + self.scroll_offset;
+            let row = self.visible_row_at_offset(self.scroll_offset, visual_y as isize);
             let col = visual_x + self.h_scroll_offset;
             return (row, col);
         }
@@ -312,10 +328,11 @@ impl Editor {
                 return (row, self.col_at_visual_pos(row, visual_y.saturating_sub(visual_lines_consumed), visual_x, content_width));
             }
             visual_lines_consumed += row_height;
-            row += 1;
+            let Some(next_row) = self.next_visible_row(row) else { break };
+            row = next_row;
         }
         if line_count > 0 {
-            let last_row = line_count - 1;
+            let last_row = self.last_visible_row();
             let last_col = self.buffer.line_len(last_row);
             (last_row, last_col)
         } else {

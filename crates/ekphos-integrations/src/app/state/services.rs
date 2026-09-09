@@ -228,9 +228,7 @@ impl App {
     }
     pub(super) fn highlight_row_window(&self) -> std::ops::Range<usize> {
         let active_rows = self.editor.editor_view_height.max(40);
-        let start = self.editor.scroll_offset().saturating_sub(active_rows);
-        let end = self.editor.scroll_offset().saturating_add(active_rows.saturating_mul(2)).min(self.editor.line_count());
-        start..end
+        self.editor.visible_source_window(self.editor.scroll_offset(), active_rows, active_rows.saturating_mul(2))
     }
     pub(super) fn get_highlight_colors(&self) -> HighlightColors {
         HighlightColors {

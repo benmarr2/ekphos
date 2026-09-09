@@ -45,6 +45,8 @@ section of `~/.config/ekphos/config.toml`.
 
 New installations use Standard editing: type normally, select with `Shift` plus the arrow keys, press `Ctrl+s` to save, and press `Esc` to return to preview. `Ctrl+a/c/x/v/z/y/f` provide familiar select, clipboard, undo, redo, and find actions. Press `F1` while editing for the full reference.
 
+While editing, press `Ctrl+l` to turn the current plain or bulleted line into a task. Press `Tab` on an H1–H3 heading to fold its section; `Tab` keeps its normal indentation behavior on other lines. Vim normal mode also supports `za`, `zM`, and `zR`. Remap these editor commands with `insert_task` and `toggle_editor_fold` in `[keybindings]`.
+
 Choose an editing mode in `~/.config/ekphos/config.toml`:
 
 ```toml

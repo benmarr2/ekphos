@@ -758,6 +758,7 @@ impl EditorSession {
 
     pub fn sync_scroll_offset(&mut self) {
         self.inner.set_scroll_offset(self.editor_scroll_top);
+        self.editor_scroll_top = self.inner.scroll_offset();
     }
 }
 

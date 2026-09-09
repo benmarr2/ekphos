@@ -111,6 +111,7 @@ pub(super) fn switch_editing_mode(app: &mut App) {
     app.editor.pending_delete = None;
     app.editor.context_menu_state = ContextMenuState::None;
     app.editor.wiki_autocomplete = WikiAutocompleteState::None;
+    app.state.keymap.reset_pending();
     app.editor.vim.reset_pending();
     app.editor.vim.command_buffer.clear();
     app.editor.vim.search_buffer.clear();
@@ -202,6 +203,82 @@ mod tests {
         assert_eq!(standard_movement(key(KeyCode::Right, KeyModifiers::ALT)), Some(CursorMove::WordForward));
         assert_eq!(standard_movement(key(KeyCode::Home, KeyModifiers::CONTROL)), Some(CursorMove::Top));
         assert_eq!(standard_movement(key(KeyCode::End, KeyModifiers::CONTROL)), Some(CursorMove::Bottom));
+    }
+
+    #[test]
+    fn ctrl_l_inserts_one_undoable_task_prefix() {
+        let mut fixture = StandardApp::new();
+        fixture.app.editor.set_cursor(0, 5);
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        assert_eq!(fixture.app.editor.text(), "- [ ] hello world");
+        assert_eq!(fixture.app.editor.cursor(), (0, 11));
+
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        assert_eq!(fixture.app.editor.text(), "- [ ] hello world");
+        assert!(fixture.app.editor.undo());
+        assert_eq!(fixture.app.editor.text(), "hello world");
+        assert_eq!(fixture.app.editor.cursor(), (0, 5));
+    }
+
+    #[test]
+    fn tab_folds_headings_and_still_indents_plain_lines() {
+        let mut fixture = StandardApp::new();
+        fixture.app.editor.select_all();
+        fixture.app.editor.insert_str("# Heading\ninside\n# Next\nplain");
+        fixture.app.editor.set_cursor(0, 0);
+
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Tab, KeyModifiers::NONE));
+        assert!(fixture.app.editor.is_heading_folded(0));
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(fixture.app.editor.cursor().0, 2);
+
+        fixture.app.editor.set_cursor(3, 0);
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(fixture.app.editor.line(3), Some("\tplain"));
+    }
+
+    #[test]
+    fn enter_on_a_tab_folded_heading_appends_after_its_existing_content() {
+        let mut fixture = StandardApp::new();
+        fixture.app.editor.select_all();
+        fixture.app.editor.insert_str("# Heading\nfirst\nexisting\n# Next");
+        fixture.app.editor.set_cursor(0, "# Heading".chars().count());
+
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Tab, KeyModifiers::NONE));
+        assert!(fixture.app.editor.is_heading_folded(0));
+
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(fixture.app.editor.text(), "# Heading\nfirst\nexisting\n\n# Next");
+        assert_eq!(fixture.app.editor.cursor(), (3, 0));
+        assert!(!fixture.app.editor.is_heading_folded(0));
+        assert!(!fixture.app.editor.is_row_hidden(3));
+    }
+
+    #[test]
+    fn vim_za_zm_and_zr_control_editor_folds() {
+        let mut fixture = StandardApp::new();
+        fixture.app.editor.select_all();
+        fixture.app.editor.insert_str("# Heading\ninside\n## Nested\nnested body\n# Next\nbody");
+        fixture.app.editor.set_cursor(0, 0);
+        fixture.app.state.config.editor.mode = EditingMode::Vim;
+
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Char('z'), KeyModifiers::NONE));
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Char('a'), KeyModifiers::NONE));
+        assert!(fixture.app.editor.is_heading_folded(0));
+
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Char('z'), KeyModifiers::NONE));
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Char('a'), KeyModifiers::NONE));
+        assert!(!fixture.app.editor.is_heading_folded(0));
+
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Char('z'), KeyModifiers::NONE));
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Char('M'), KeyModifiers::SHIFT));
+        assert!(fixture.app.editor.is_heading_folded(0));
+        assert!(fixture.app.editor.is_heading_folded(2));
+
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Char('z'), KeyModifiers::NONE));
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Char('R'), KeyModifiers::SHIFT));
+        assert!(!fixture.app.editor.is_heading_folded(0));
+        assert!(!fixture.app.editor.is_heading_folded(2));
     }
 
     #[test]

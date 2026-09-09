@@ -297,12 +297,8 @@ impl App {
             if self.editor.mode == Mode::Edit {
                 let start_col = m.start_col;
                 self.editor.set_cursor(target_row, start_col);
-                let half_height = self.editor.editor_view_height / 2;
-                if target_row > half_height {
-                    self.editor.editor_scroll_top = target_row - half_height;
-                } else {
-                    self.editor.editor_scroll_top = 0;
-                }
+                self.editor.center_cursor();
+                self.editor.editor_scroll_top = self.editor.scroll_offset();
             } else {
                 for (idx, source_line) in self.document.content_items.iter().map(ContentItem::source_line).enumerate() {
                     if source_line >= target_row {

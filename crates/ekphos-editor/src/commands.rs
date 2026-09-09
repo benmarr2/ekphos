@@ -1,6 +1,41 @@
 use super::*;
 
 impl Editor {
+    /// Turn the current plain or unordered-list line into an unchecked task.
+    /// Existing tasks and non-text Markdown blocks are intentionally unchanged.
+    pub fn insert_task_on_current_line(&mut self) -> bool {
+        if self.has_selection() {
+            return false;
+        }
+        let cursor_before = self.cursor.pos();
+        let Some(line) = self.buffer.line(cursor_before.row) else {
+            return false;
+        };
+        if self.is_frontmatter_row(cursor_before.row) || self.is_fenced_code_row(cursor_before.row) {
+            return false;
+        }
+        let trimmed = line.trim_start();
+        let indent_col = line.chars().count() - trimmed.chars().count();
+        let (insert_col, text) = match ListPrefix::detect(line) {
+            Some(ListPrefix::Task { .. }) | Some(ListPrefix::Ordered { .. }) => return false,
+            Some(ListPrefix::Unordered { .. }) => (indent_col + 2, "[ ] "),
+            None if ekphos_core::markdown::heading(line).is_some() || trimmed.starts_with('>') || trimmed.starts_with('|') || trimmed.starts_with("<details") || trimmed.starts_with("<summary") || ekphos_core::markdown::is_display_math_delimiter(line) => {
+                return false;
+            }
+            None => (indent_col, "- [ ] "),
+        };
+        self.buffer.insert_str(cursor_before.row, insert_col, text);
+        self.wrap_cache.invalidate_line(cursor_before.row);
+        self.update_row_highlights(cursor_before.row);
+        let inserted_len = text.chars().count();
+        let cursor_after = Position::new(cursor_before.row, if cursor_before.col >= insert_col { cursor_before.col + inserted_len } else { cursor_before.col });
+        self.history.record(EditOperation::Insert { pos: Position::new(cursor_before.row, insert_col), text: text.to_string() }, cursor_before, cursor_after);
+        self.cursor.move_to(cursor_after.row, cursor_after.col);
+        self.reconcile_fold_anchors();
+        self.ensure_cursor_visible();
+        true
+    }
+
     pub fn delete_current_line(&mut self) {
         let pos = self.cursor.pos();
         let row = pos.row;
@@ -10,6 +45,11 @@ impl Editor {
         self.clipboard = Some(deleted_text.clone());
         let _ = self.clipboard_port.set_text(&deleted_text);
         self.buffer.delete_line(row);
+        if line_count > 1 {
+            self.remap_folds_for_deleted_rows(row, 1);
+        } else {
+            self.reconcile_fold_anchors();
+        }
         self.wrap_cache.invalidate_from(row);
         let cursor_after = Position { row: row.min(self.buffer.line_count().saturating_sub(1)), col: 0 };
         if line_count == 1 {
@@ -58,6 +98,7 @@ impl Editor {
                 self.buffer.insert_line(new_row + i, line.clone());
                 self.wrap_cache.insert_line(new_row + i);
             }
+            self.remap_folds_for_inserted_rows(new_row, lines.len());
             self.cursor.move_to(new_row, 0);
             self.history.record(EditOperation::LineInsert { row: new_row, lines }, cursor_before, Position { row: new_row, col: 0 });
         } else {
@@ -91,6 +132,7 @@ impl Editor {
                 self.buffer.insert_line(row + i, line.clone());
                 self.wrap_cache.insert_line(row + i);
             }
+            self.remap_folds_for_inserted_rows(row, lines.len());
             self.cursor.move_to(row, 0);
             self.history.record(EditOperation::LineInsert { row, lines }, cursor_before, Position { row, col: 0 });
         } else {
@@ -103,6 +145,7 @@ impl Editor {
         let deleted_selection = self.take_selection_operation();
         let pos = self.cursor.pos();
         self.buffer.insert_char(pos.row, pos.col, c);
+        self.reconcile_fold_anchors();
         self.wrap_cache.invalidate_line(pos.row);
         self.update_row_highlights(pos.row);
         let cursor_after = Position::new(pos.row, pos.col + 1);
@@ -127,6 +170,7 @@ impl Editor {
         let newline_count = s.bytes().filter(|byte| *byte == b'\n').count();
         if newline_count == 0 {
             self.buffer.insert_str(pos.row, pos.col, s);
+            self.reconcile_fold_anchors();
             self.wrap_cache.invalidate_line(pos.row);
             self.update_row_highlights(pos.row);
             self.cursor.move_to(pos.row, pos.col + s.chars().count());
@@ -155,6 +199,7 @@ impl Editor {
             if !last_part.is_empty() {
                 self.buffer.insert_str(last_idx, 0, last_part);
             }
+            self.remap_folds_for_inserted_rows(pos.row + 1, newline_count);
             self.wrap_cache.invalidate_from(pos.row);
             self.highlight_index.shift_rows_after(pos.row + 1, newline_count as isize);
             self.row_style_cache.borrow_mut().shift_rows_after(pos.row + 1, newline_count as isize);
@@ -172,6 +217,16 @@ impl Editor {
 
     pub fn insert_newline(&mut self) {
         let cursor_before = self.cursor.pos();
+        let folded_content_end = (!self.has_selection() && self.is_heading_folded(cursor_before.row) && cursor_before.col == self.buffer.line_len(cursor_before.row)).then(|| {
+            let row = self.heading_section_end(cursor_before.row).saturating_sub(1);
+            Position::new(row, self.buffer.line_len(row))
+        });
+        if let Some(content_end) = folded_content_end {
+            self.reveal_row(content_end.row);
+            self.cursor.move_to(content_end.row, content_end.col);
+        } else {
+            self.unfold_heading(cursor_before.row);
+        }
         let deleted_selection = self.take_selection_operation();
         let pos = self.cursor.pos();
         let list_prefix = self.buffer.line(pos.row).and_then(|line| {
@@ -183,6 +238,7 @@ impl Editor {
         });
         if let Some((_, prefix_len, true)) = &list_prefix {
             let deleted = self.buffer.delete_range(pos.row, 0, *prefix_len);
+            self.reconcile_fold_anchors();
             self.wrap_cache.invalidate_line(pos.row);
             self.update_row_highlights(pos.row);
             let mut operations = Vec::with_capacity(2);
@@ -196,6 +252,7 @@ impl Editor {
             return;
         }
         self.buffer.split_line(pos.row, pos.col);
+        self.remap_folds_for_inserted_rows(pos.row + 1, 1);
         self.wrap_cache.insert_line(pos.row + 1);
         self.wrap_cache.invalidate_line(pos.row);
         self.highlight_index.shift_rows_after(pos.row + 1, 1);
@@ -215,6 +272,7 @@ impl Editor {
         } else {
             self.cursor.move_to(pos.row + 1, 0);
         }
+        self.reconcile_fold_anchors();
         self.history.record_group(operations, cursor_before, self.cursor.pos());
         self.update_row_highlights(pos.row);
         self.update_row_highlights(pos.row + 1);
@@ -227,6 +285,7 @@ impl Editor {
         let indent: String = self.buffer.line(pos.row).map(|line| line.chars().take_while(|c| c.is_whitespace()).collect()).unwrap_or_default();
         let indent_len = indent.chars().count();
         self.buffer.insert_line(pos.row, indent.clone());
+        self.remap_folds_for_inserted_rows(pos.row, 1);
         self.wrap_cache.insert_line(pos.row);
         self.highlight_index.shift_rows_after(pos.row, 1);
         self.row_style_cache.borrow_mut().shift_rows_after(pos.row, 1);
@@ -241,12 +300,14 @@ impl Editor {
         let line_len = self.buffer.line_len(pos.row);
         if pos.col < line_len {
             if let Some(c) = self.buffer.delete_char(pos.row, pos.col) {
+                self.reconcile_fold_anchors();
                 self.wrap_cache.invalidate_line(pos.row);
                 self.update_row_highlights(pos.row);
                 self.history.record(EditOperation::Delete { start: pos, end: Position::new(pos.row, pos.col + 1), deleted_text: c.to_string() }, pos, pos);
             }
         } else if pos.row + 1 < self.buffer.line_count() {
             self.buffer.join_with_previous(pos.row + 1);
+            self.remap_folds_for_deleted_rows(pos.row + 1, 1);
             self.wrap_cache.remove_line(pos.row + 1);
             self.wrap_cache.invalidate_line(pos.row);
             self.highlight_index.shift_rows_after(pos.row + 1, -1);
@@ -262,6 +323,7 @@ impl Editor {
             let cursor_before = pos;
             self.cursor.move_to(pos.row, pos.col - 1);
             if let Some(c) = self.buffer.delete_char(pos.row, pos.col - 1) {
+                self.reconcile_fold_anchors();
                 self.wrap_cache.invalidate_line(pos.row);
                 self.update_row_highlights(pos.row);
                 self.history.record(EditOperation::Delete { start: Position::new(pos.row, pos.col - 1), end: pos, deleted_text: c.to_string() }, cursor_before, self.cursor.pos());
@@ -270,6 +332,7 @@ impl Editor {
             let prev_len = self.buffer.line_len(pos.row - 1);
             let cursor_before = pos;
             self.buffer.join_with_previous(pos.row);
+            self.remap_folds_for_deleted_rows(pos.row, 1);
             self.wrap_cache.remove_line(pos.row);
             self.wrap_cache.invalidate_line(pos.row - 1);
             self.highlight_index.shift_rows_after(pos.row, -1);
@@ -288,6 +351,7 @@ impl Editor {
                 self.apply_inverse_operation(op);
             }
             self.cursor.move_to(entry.cursor_before.row, entry.cursor_before.col);
+            self.reveal_row(entry.cursor_before.row);
             self.cursor.cancel_selection();
             self.ensure_cursor_visible();
             true
@@ -305,6 +369,7 @@ impl Editor {
                 self.apply_operation(op);
             }
             self.cursor.move_to(entry.cursor_after.row, entry.cursor_after.col);
+            self.reveal_row(entry.cursor_after.row);
             self.cursor.cancel_selection();
             self.ensure_cursor_visible();
             true
@@ -319,16 +384,24 @@ impl Editor {
             EditOperation::Insert { pos, text } => {
                 let end = history::calculate_end_position(*pos, text);
                 self.buffer.discard_text_range(pos.row, pos.col, end.row, end.col);
+                let removed_rows = end.row.saturating_sub(pos.row);
+                if removed_rows > 0 {
+                    self.remap_folds_for_deleted_rows(pos.row + 1, removed_rows);
+                } else {
+                    self.reconcile_fold_anchors();
+                }
                 self.wrap_cache.invalidate_from(pos.row);
             }
             EditOperation::Delete { start, deleted_text, .. } => self.apply_insert(*start, deleted_text),
             EditOperation::SplitLine { pos } => {
                 self.buffer.join_with_previous(pos.row + 1);
+                self.remap_folds_for_deleted_rows(pos.row + 1, 1);
                 self.wrap_cache.remove_line(pos.row + 1);
                 self.wrap_cache.invalidate_line(pos.row);
             }
             EditOperation::JoinLine { row, col } => {
                 self.buffer.split_line(row - 1, *col);
+                self.remap_folds_for_inserted_rows(*row, 1);
                 self.wrap_cache.insert_line(*row);
                 self.wrap_cache.invalidate_line(row - 1);
             }
@@ -339,6 +412,7 @@ impl Editor {
                         self.buffer.insert_str(row, *start_col, text);
                     }
                 }
+                self.reconcile_fold_anchors();
                 self.wrap_cache.invalidate_from(*start_row);
             }
             #[cfg(test)]
@@ -355,16 +429,19 @@ impl Editor {
                         self.wrap_cache.remove_line(*row);
                     }
                 }
+                self.remap_folds_for_deleted_rows(*row, lines.len());
             }
             EditOperation::LineDelete { row, lines } => {
                 for (index, line) in lines.iter().enumerate() {
                     self.buffer.insert_line(row + index, line.clone());
                     self.wrap_cache.insert_line(row + index);
                 }
+                self.remap_folds_for_inserted_rows(*row, lines.len());
             }
         }
     }
     fn apply_insert(&mut self, pos: Position, text: &str) {
+        let inserted_rows = text.bytes().filter(|byte| *byte == b'\n').count();
         if text.contains('\n') {
             let mut parts = text.split('\n');
             let first = parts.next().unwrap_or_default();
@@ -382,6 +459,11 @@ impl Editor {
         } else {
             self.buffer.insert_str(pos.row, pos.col, text);
         }
+        if inserted_rows > 0 {
+            self.remap_folds_for_inserted_rows(pos.row + 1, inserted_rows);
+        } else {
+            self.reconcile_fold_anchors();
+        }
         self.wrap_cache.invalidate_from(pos.row);
     }
     fn delete_block(&mut self, start_row: usize, end_row: usize, start_col: usize, end_col: usize) {
@@ -397,20 +479,29 @@ impl Editor {
             }
             EditOperation::Delete { start, end, .. } => {
                 self.buffer.discard_text_range(start.row, start.col, end.row, end.col);
+                let removed_rows = end.row.saturating_sub(start.row);
+                if removed_rows > 0 {
+                    self.remap_folds_for_deleted_rows(start.row + 1, removed_rows);
+                } else {
+                    self.reconcile_fold_anchors();
+                }
                 self.wrap_cache.invalidate_from(start.row);
             }
             EditOperation::SplitLine { pos } => {
                 self.buffer.split_line(pos.row, pos.col);
+                self.remap_folds_for_inserted_rows(pos.row + 1, 1);
                 self.wrap_cache.insert_line(pos.row + 1);
                 self.wrap_cache.invalidate_line(pos.row);
             }
             EditOperation::JoinLine { row, .. } => {
                 self.buffer.join_with_previous(*row);
+                self.remap_folds_for_deleted_rows(*row, 1);
                 self.wrap_cache.remove_line(*row);
                 self.wrap_cache.invalidate_line(row - 1);
             }
             EditOperation::BlockDelete { start_row, end_row, start_col, end_col, .. } => {
                 self.delete_block(*start_row, *end_row, *start_col, *end_col);
+                self.reconcile_fold_anchors();
             }
             #[cfg(test)]
             EditOperation::BlockInsert { start_row, col, lines } => {
@@ -427,6 +518,7 @@ impl Editor {
                     self.buffer.insert_line(row + i, line.clone());
                     self.wrap_cache.insert_line(row + i);
                 }
+                self.remap_folds_for_inserted_rows(*row, lines.len());
             }
             EditOperation::LineDelete { row, lines } => {
                 for _ in 0..lines.len() {
@@ -435,6 +527,7 @@ impl Editor {
                         self.wrap_cache.remove_line(*row);
                     }
                 }
+                self.remap_folds_for_deleted_rows(*row, lines.len());
             }
         }
     }

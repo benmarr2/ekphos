@@ -353,9 +353,7 @@ impl Editor {
     }
     pub(super) fn active_highlight_rows(&self) -> std::ops::Range<usize> {
         let active_rows = self.view_height.max(40);
-        let start = self.scroll_offset.saturating_sub(active_rows);
-        let end = self.scroll_offset.saturating_add(active_rows.saturating_mul(2)).min(self.buffer.line_count());
-        start..end
+        self.visible_source_window(self.scroll_offset, active_rows, active_rows.saturating_mul(2))
     }
     pub(super) fn highlight_line_markdown(&mut self, row: usize, line: &str) {
         let line_len = line.chars().count();

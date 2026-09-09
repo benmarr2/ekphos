@@ -29,6 +29,8 @@ impl Editor {
             highlight_index: HighlightIndex::new(),
             row_style_cache: RefCell::new(RowStyleCache::new()),
             code_block_rows: HashSet::new(),
+            folded_headings: BTreeSet::new(),
+            fold_projection: RefCell::new(None),
             frontmatter_end: None,
             wiki_link_ranges: Vec::new(),
             wiki_link_valid_style: Style::default().fg(Color::Cyan),
@@ -60,6 +62,8 @@ impl Editor {
             + self.row_style_cache.borrow().retained_bytes
             + self.wiki_link_ranges.capacity() * std::mem::size_of::<WikiLinkRange>()
             + self.code_block_rows.capacity() * std::mem::size_of::<usize>()
+            + self.folded_headings.len() * std::mem::size_of::<usize>()
+            + self.fold_projection.borrow().as_ref().map_or(0, |projection| projection.heading_levels.capacity() * std::mem::size_of::<Option<usize>>() + projection.hidden_ranges.capacity() * std::mem::size_of::<(usize, usize)>())
     }
 
     pub fn history_stats(&self) -> HistoryStats {
@@ -203,6 +207,7 @@ impl Editor {
                 self.buffer.delete_line(row);
                 self.wrap_cache.remove_line(row);
             }
+            self.remap_folds_for_deleted_rows(start_row, end_row - start_row + 1);
             let new_row = start_row.min(self.buffer.line_count().saturating_sub(1));
             self.cursor.move_to(new_row, 0);
             self.cursor.cancel_selection();
@@ -271,6 +276,7 @@ impl Editor {
                     }
                 }
             }
+            self.reconcile_fold_anchors();
             self.wrap_cache.invalidate_from(start_row);
             self.cursor.move_to(start_row, start_col);
             self.cursor.cancel_selection();

@@ -64,10 +64,43 @@ pub(super) fn handle_edit_mode(app: &mut App, key: crossterm::event::KeyEvent) {
         app.update_editor_block();
         return;
     }
+    if handle_editor_command(app, key) {
+        return;
+    }
     dispatch_editor_input(app, key);
     app.request_highlight_update();
     app.update_editor_block();
 }
+
+fn handle_editor_command(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
+    let accepts_line_commands = app.state.config.editor.mode == EditingMode::Standard || matches!(app.editor.vim.mode.input_mode(), VimInputMode::Normal | VimInputMode::Insert | VimInputMode::Replace);
+    let cursor_row = app.editor.cursor().0;
+    let can_toggle_fold = accepts_line_commands && app.editor.foldable_heading_level(cursor_row).is_some();
+    let resolution = app.state.keymap.resolve_editor(key, |command| match command {
+        AppCommand::InsertTask => accepts_line_commands,
+        AppCommand::ToggleEditorFold => can_toggle_fold,
+        _ => false,
+    });
+    match resolution {
+        KeyResolution::Command(AppCommand::InsertTask) => {
+            if app.editor.insert_task_on_current_line() {
+                app.request_highlight_update();
+            }
+            true
+        }
+        KeyResolution::Command(AppCommand::ToggleEditorFold) => {
+            if app.editor.toggle_current_heading_fold() {
+                app.state.needs_full_clear = true;
+                app.editor.editor_scroll_top = app.editor.scroll_offset();
+                app.request_highlight_update();
+            }
+            true
+        }
+        KeyResolution::Pending => true,
+        KeyResolution::Command(_) | KeyResolution::NoMatch => false,
+    }
+}
+
 fn dispatch_editor_input(app: &mut App, key: crossterm::event::KeyEvent) {
     if app.state.config.editor.mode == EditingMode::Standard {
         handle_standard_mode(app, key);

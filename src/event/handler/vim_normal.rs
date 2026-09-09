@@ -163,6 +163,24 @@ pub(super) fn handle_vim_normal_mode(app: &mut App, key: crossterm::event::KeyEv
     if app.editor.vim.pending_z {
         app.editor.vim.pending_z = false;
         match key.code {
+            KeyCode::Char('a') => {
+                if app.editor.toggle_current_heading_fold() {
+                    app.state.needs_full_clear = true;
+                    app.editor.editor_scroll_top = app.editor.scroll_offset();
+                }
+            }
+            KeyCode::Char('M') => {
+                let count = app.editor.fold_all_headings();
+                app.editor.vim.status_message = Some(format!("Folded {count} headings"));
+                app.state.needs_full_clear = true;
+                app.editor.editor_scroll_top = app.editor.scroll_offset();
+            }
+            KeyCode::Char('R') => {
+                let count = app.editor.unfold_all_headings();
+                app.editor.vim.status_message = Some(format!("Unfolded {count} headings"));
+                app.state.needs_full_clear = true;
+                app.editor.editor_scroll_top = app.editor.scroll_offset();
+            }
             KeyCode::Char('z') => {
                 app.editor.center_cursor();
             }

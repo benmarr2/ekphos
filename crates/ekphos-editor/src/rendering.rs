@@ -63,9 +63,9 @@ impl Editor {
         };
         let block_selection = self.visual_block_selection;
         let line_count = self.buffer.line_count();
-        let start_row = self.scroll_offset.min(line_count);
+        let mut row = self.scroll_offset.min(line_count);
         let mut screen_y = area.y;
-        for row in start_row..line_count {
+        while row < line_count {
             if screen_y >= area.y + area.height {
                 break;
             }
@@ -86,6 +86,8 @@ impl Editor {
                     self.render_cursor_at(buf, content_start_x, screen_y, ' ', Style::default());
                 }
                 screen_y += 1;
+                let Some(next_row) = self.next_visible_row(row) else { break };
+                row = next_row;
                 continue;
             }
             let row_styles = self.get_row_styles_cached(row);
@@ -141,9 +143,21 @@ impl Editor {
                 if is_cursor_line && cursor_pos.col >= line_len && chars.peek().is_none() && x < area.x + area.width {
                     self.render_cursor_at(buf, x, screen_y, ' ', Style::default());
                 }
+                let marker_x = if is_cursor_line && cursor_pos.col >= line_len { x + 1 } else { x };
+                if chars.peek().is_none() && self.is_heading_folded(row) && marker_x + 1 < content_end_x {
+                    if let Some(cell) = buf.cell_mut((marker_x, screen_y)) {
+                        cell.set_char(' ');
+                    }
+                    if let Some(cell) = buf.cell_mut((marker_x + 1, screen_y)) {
+                        cell.set_char('…');
+                        cell.set_style(self.line_number_style.add_modifier(Modifier::BOLD));
+                    }
+                }
                 is_wrapped_continuation = true;
                 screen_y += 1;
             }
+            let Some(next_row) = self.next_visible_row(row) else { break };
+            row = next_row;
         }
         if self.buffer.is_empty() {
             self.render_cursor_at(buf, content_start_x, area.y, ' ', Style::default());
@@ -164,8 +178,8 @@ impl Editor {
         let block_selection = self.visual_block_selection;
         let h_scroll = self.h_scroll_offset;
         let mut y = area.y;
-        let end_row = (self.scroll_offset + area.height as usize).min(self.buffer.line_count());
-        for row in self.scroll_offset..end_row {
+        let mut row = self.scroll_offset;
+        while row < self.buffer.line_count() {
             if y >= area.y + area.height {
                 break;
             }
@@ -217,7 +231,19 @@ impl Editor {
             if is_cursor_line && cursor_pos.col >= line_len && x < area.x + area.width {
                 self.render_cursor_at(buf, x, y, ' ', Style::default());
             }
+            let marker_x = if is_cursor_line && cursor_pos.col >= line_len { x + 1 } else { x };
+            if self.is_heading_folded(row) && marker_x + 1 < content_end_x {
+                if let Some(cell) = buf.cell_mut((marker_x, y)) {
+                    cell.set_char(' ');
+                }
+                if let Some(cell) = buf.cell_mut((marker_x + 1, y)) {
+                    cell.set_char('…');
+                    cell.set_style(self.line_number_style.add_modifier(Modifier::BOLD));
+                }
+            }
             y += 1;
+            let Some(next_row) = self.next_visible_row(row) else { break };
+            row = next_row;
         }
         if self.buffer.line_count() <= self.scroll_offset {
             self.render_cursor_at(buf, content_start_x, area.y, ' ', Style::default());

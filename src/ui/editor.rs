@@ -84,8 +84,8 @@ pub fn render_editor(f: &mut Frame, view: EditorView<'_>, layout: EditorLayout) 
                         f.set_cursor_position((screen_x, screen_y));
                     }
                 }
-            } else if cursor_row < scroll_top + inner_height {
-                let screen_y = editor_area.y + y_offset + (cursor_row - scroll_top) as u16;
+            } else if view.editor.visible_row_distance(scroll_top, cursor_row) < inner_height {
+                let screen_y = editor_area.y + y_offset + view.editor.visible_row_distance(scroll_top, cursor_row) as u16;
                 let display_col = view.editor.cursor_display_col();
                 let h_scroll_display = view.editor.h_scroll_display_offset();
                 let adjusted_col = display_col.saturating_sub(h_scroll_display);
@@ -103,8 +103,8 @@ pub fn render_editor(f: &mut Frame, view: EditorView<'_>, layout: EditorLayout) 
         let scroll_top = view.editor.editor_scroll_top;
         let (has_left_overflow, has_right_overflow) = view.editor.get_overflow_info();
         let y_offset = if view.zen_mode { 0 } else { 1 };
-        if cursor_row >= scroll_top && cursor_row < scroll_top + inner_height {
-            let y = editor_area.y + y_offset + (cursor_row - scroll_top) as u16;
+        if cursor_row >= scroll_top && view.editor.visible_row_distance(scroll_top, cursor_row) < inner_height {
+            let y = editor_area.y + y_offset + view.editor.visible_row_distance(scroll_top, cursor_row) as u16;
             if has_left_overflow {
                 let indicator = Paragraph::new("«│").style(Style::default().fg(theme.warning));
                 let x = if view.zen_mode { editor_area.x } else { editor_area.x + 1 };

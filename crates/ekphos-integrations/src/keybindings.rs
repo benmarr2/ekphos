@@ -52,10 +52,12 @@ pub enum AppCommand {
     SidebarSearch,
     CycleSort,
     ToggleEditorMode,
+    InsertTask,
+    ToggleEditorFold,
 }
 
 impl AppCommand {
-    pub const ALL: [Self; 46] = [
+    pub const ALL: [Self; 48] = [
         Self::Quit,
         Self::FocusNext,
         Self::FocusPrevious,
@@ -102,6 +104,8 @@ impl AppCommand {
         Self::SidebarSearch,
         Self::CycleSort,
         Self::ToggleEditorMode,
+        Self::InsertTask,
+        Self::ToggleEditorFold,
     ];
 
     pub const fn id(self) -> &'static str {
@@ -152,6 +156,8 @@ impl AppCommand {
             Self::SidebarSearch => "sidebar_search",
             Self::CycleSort => "cycle_sort",
             Self::ToggleEditorMode => "toggle_editor_mode",
+            Self::InsertTask => "insert_task",
+            Self::ToggleEditorFold => "toggle_editor_fold",
         }
     }
 
@@ -207,7 +213,23 @@ impl AppCommand {
             Self::SidebarSearch => &["/"],
             Self::CycleSort => &["s"],
             Self::ToggleEditorMode => &["f6"],
+            Self::InsertTask => &["ctrl+l"],
+            Self::ToggleEditorFold => &["tab"],
         }
+    }
+
+    const fn input_contexts(self) -> u8 {
+        const MAIN: u8 = 1;
+        const EDITOR: u8 = 2;
+        match self {
+            Self::ToggleEditorMode => MAIN | EDITOR,
+            Self::InsertTask | Self::ToggleEditorFold => EDITOR,
+            _ => MAIN,
+        }
+    }
+
+    const fn shares_input_context(self, other: Self) -> bool {
+        self.input_contexts() & other.input_contexts() != 0
     }
 }
 
@@ -412,6 +434,7 @@ pub enum KeyResolution {
 pub struct Keymap {
     bindings: BTreeMap<AppCommand, Vec<KeySequence>>,
     pending: Vec<KeyChord>,
+    editor_pending: Vec<KeyChord>,
 }
 
 impl Default for Keymap {
@@ -450,6 +473,9 @@ impl Keymap {
                 if left_command == right_command {
                     continue;
                 }
+                if !left_command.shares_input_context(right_command) {
+                    continue;
+                }
                 if left == right {
                     issues.push(format!("Binding '{left}' is assigned to both '{}' and '{}'.", left_command.id(), right_command.id()));
                 } else if left.0.len() < right.0.len() && right.starts_with(&left.0) {
@@ -460,7 +486,7 @@ impl Keymap {
             }
         }
         if issues.is_empty() {
-            Ok(Self { bindings, pending: Vec::new() })
+            Ok(Self { bindings, pending: Vec::new(), editor_pending: Vec::new() })
         } else {
             issues.sort();
             issues.dedup();
@@ -469,35 +495,44 @@ impl Keymap {
     }
 
     pub fn resolve(&mut self, event: KeyEvent, mut available: impl FnMut(AppCommand) -> bool) -> KeyResolution {
+        Self::resolve_with_pending(&self.bindings, &mut self.pending, event, &mut available)
+    }
+
+    pub fn resolve_editor(&mut self, event: KeyEvent, mut available: impl FnMut(AppCommand) -> bool) -> KeyResolution {
+        Self::resolve_with_pending(&self.bindings, &mut self.editor_pending, event, &mut available)
+    }
+
+    fn resolve_with_pending(bindings: &BTreeMap<AppCommand, Vec<KeySequence>>, pending: &mut Vec<KeyChord>, event: KeyEvent, available: &mut impl FnMut(AppCommand) -> bool) -> KeyResolution {
         let chord = KeyChord::from_event(event);
-        self.pending.push(chord);
-        let resolution = self.resolve_pending(&mut available);
-        if resolution != KeyResolution::NoMatch || self.pending.len() == 1 {
+        pending.push(chord);
+        let resolution = Self::resolve_pending(bindings, pending, available);
+        if resolution != KeyResolution::NoMatch || pending.len() == 1 {
             if resolution == KeyResolution::NoMatch {
-                self.pending.clear();
+                pending.clear();
             }
             return resolution;
         }
-        self.pending.clear();
-        self.pending.push(chord);
-        let retry = self.resolve_pending(&mut available);
+        pending.clear();
+        pending.push(chord);
+        let retry = Self::resolve_pending(bindings, pending, available);
         if retry == KeyResolution::NoMatch {
-            self.pending.clear();
+            pending.clear();
         }
         retry
     }
-    fn resolve_pending(&mut self, available: &mut impl FnMut(AppCommand) -> bool) -> KeyResolution {
+
+    fn resolve_pending(bindings: &BTreeMap<AppCommand, Vec<KeySequence>>, pending: &mut Vec<KeyChord>, available: &mut impl FnMut(AppCommand) -> bool) -> KeyResolution {
         let mut has_prefix = false;
         for command in AppCommand::ALL {
             if !available(command) {
                 continue;
             }
-            for sequence in self.bindings.get(&command).into_iter().flatten() {
-                if sequence.0 == self.pending {
-                    self.pending.clear();
+            for sequence in bindings.get(&command).into_iter().flatten() {
+                if sequence.0 == *pending {
+                    pending.clear();
                     return KeyResolution::Command(command);
                 }
-                if sequence.starts_with(&self.pending) {
+                if sequence.starts_with(pending) {
                     has_prefix = true;
                 }
             }
@@ -511,6 +546,7 @@ impl Keymap {
 
     pub fn reset_pending(&mut self) {
         self.pending.clear();
+        self.editor_pending.clear();
     }
 
     pub fn binding_label(&self, command: AppCommand) -> String {
@@ -534,6 +570,25 @@ mod tests {
     fn editor_mode_toggle_defaults_to_f6() {
         let keymap = Keymap::default();
         assert_eq!(keymap.binding_label(AppCommand::ToggleEditorMode), "F6");
+    }
+
+    #[test]
+    fn editor_commands_can_reuse_main_view_bindings() {
+        let keymap = Keymap::default();
+        assert_eq!(keymap.binding_label(AppCommand::InsertTask), "Ctrl+l");
+        assert_eq!(keymap.binding_label(AppCommand::ToggleEditorFold), "Tab");
+        assert_eq!(keymap.binding_label(AppCommand::FocusNext), "Tab / l / Right");
+    }
+
+    #[test]
+    fn editor_sequences_survive_main_context_resolution() {
+        let mut keymap = Keymap::from_config(&config(&[("insert_task", &["g t"])])).expect("valid keymap");
+        let g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        let t = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
+        assert_eq!(keymap.resolve(g, |command| command == AppCommand::ToggleEditorMode), KeyResolution::NoMatch);
+        assert_eq!(keymap.resolve_editor(g, |command| command == AppCommand::InsertTask), KeyResolution::Pending);
+        assert_eq!(keymap.resolve(t, |command| command == AppCommand::ToggleEditorMode), KeyResolution::NoMatch);
+        assert_eq!(keymap.resolve_editor(t, |command| command == AppCommand::InsertTask), KeyResolution::Command(AppCommand::InsertTask));
     }
 
     #[test]

@@ -26,7 +26,7 @@ use ratatui::{
 };
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::sync::Arc;
 use unicode_width::UnicodeWidthChar;
 
@@ -205,6 +205,12 @@ impl HighlightIndex {
     }
 }
 
+#[derive(Debug, Default)]
+struct FoldProjection {
+    heading_levels: Vec<Option<usize>>,
+    hidden_ranges: Vec<(usize, usize)>,
+}
+
 #[derive(Debug, Clone, Default)]
 struct RowStyleCache {
     rows: BTreeMap<usize, Vec<Style>>,
@@ -307,7 +313,7 @@ impl ListPrefix {
             let marker = trimmed.chars().next().unwrap();
             if trimmed.len() >= 5 {
                 let after_marker = &trimmed[2..];
-                if after_marker.starts_with("[ ] ") || after_marker.starts_with("[x] ") || after_marker.starts_with("[X] ") {
+                if matches!(after_marker, "[ ]" | "[x]" | "[X]") || after_marker.starts_with("[ ] ") || after_marker.starts_with("[x] ") || after_marker.starts_with("[X] ") {
                     return Some(ListPrefix::Task { indent, marker });
                 }
             }
@@ -380,6 +386,8 @@ pub struct Editor {
     highlight_index: HighlightIndex,
     row_style_cache: RefCell<RowStyleCache>,
     code_block_rows: HashSet<usize>,
+    folded_headings: BTreeSet<usize>,
+    fold_projection: RefCell<Option<FoldProjection>>,
     frontmatter_end: Option<usize>,
     wiki_link_ranges: Vec<WikiLinkRange>,
     wiki_link_valid_style: Style,
@@ -411,6 +419,7 @@ impl Default for Editor {
 mod api;
 mod commands;
 mod coordinates;
+mod folding;
 mod highlighting;
 mod navigation;
 mod rendering;
@@ -666,5 +675,173 @@ mod tests {
         editor.update_markdown_highlights();
         assert!(editor.code_block_rows.iter().all(|row| active_rows.contains(row)));
         assert!(editor.code_block_rows.len() <= active_rows.len());
+    }
+
+    #[test]
+    fn task_shortcut_formats_plain_and_unordered_lines_once() {
+        let mut editor = Editor::new(vec!["  write docs".into(), "\t* ship release".into(), "- [x] done ✅ 2026-09-09".into(), "- [ ]".into()]);
+        editor.set_cursor(0, 7);
+        assert!(editor.insert_task_on_current_line());
+        assert_eq!(editor.line(0), Some("  - [ ] write docs"));
+        assert_eq!(editor.cursor(), (0, 13));
+        assert!(editor.undo());
+        assert_eq!(editor.line(0), Some("  write docs"));
+        assert!(editor.redo());
+        assert_eq!(editor.line(0), Some("  - [ ] write docs"));
+
+        editor.set_cursor(1, 3);
+        assert!(editor.insert_task_on_current_line());
+        assert_eq!(editor.line(1), Some("\t* [ ] ship release"));
+        editor.set_cursor(2, 0);
+        assert!(!editor.insert_task_on_current_line());
+        assert_eq!(editor.line(2), Some("- [x] done ✅ 2026-09-09"));
+        editor.set_cursor(3, 0);
+        assert!(!editor.insert_task_on_current_line());
+        assert_eq!(editor.line(3), Some("- [ ]"));
+    }
+
+    #[test]
+    fn task_shortcut_ignores_frontmatter_code_and_block_lines() {
+        let mut editor = Editor::new(vec!["---".into(), "title: note".into(), "---".into(), "```markdown".into(), "code".into(), "```".into(), "# Heading".into(), "> quote".into(), "1. ordered".into()]);
+        for row in 0..editor.line_count() {
+            editor.set_cursor(row, 0);
+            assert!(!editor.insert_task_on_current_line(), "row {row} should not be formatted");
+        }
+    }
+
+    #[test]
+    fn heading_folds_keep_nested_state_and_skip_hidden_rows() {
+        let mut editor = Editor::new(vec!["# Parent".into(), "parent body".into(), "## Child".into(), "child body".into(), "# Sibling".into(), "tail".into()]);
+        assert!(editor.toggle_heading_fold(2));
+        assert!(editor.is_row_hidden(3));
+        assert!(editor.toggle_heading_fold(0));
+        assert!(editor.is_row_hidden(1));
+        assert!(editor.is_row_hidden(2));
+        assert!(editor.toggle_heading_fold(0));
+        assert!(!editor.is_row_hidden(2));
+        assert!(editor.is_row_hidden(3), "the child fold should survive reopening its parent");
+
+        assert!(editor.toggle_heading_fold(0));
+        editor.set_cursor(0, 0);
+        editor.move_cursor(CursorMove::Down);
+        assert_eq!(editor.cursor().0, 4);
+        editor.set_cursor(3, 0);
+        assert!(!editor.is_heading_folded(0));
+        assert!(!editor.is_heading_folded(2));
+        assert!(!editor.is_row_hidden(3));
+    }
+
+    #[test]
+    fn folded_rows_are_projected_out_of_coordinates_and_rendering() {
+        let mut editor = Editor::new(vec!["# Heading".into(), "hidden one".into(), "hidden two".into(), "# Next".into(), "tail".into()]);
+        editor.set_line_wrap(false);
+        editor.set_line_number_mode(LineNumberMode::None);
+        assert!(editor.toggle_heading_fold(0));
+        assert_eq!(editor.visible_row_distance(0, 3), 1);
+        assert_eq!(editor.visual_to_logical_coords(1, 0), (3, 0));
+
+        editor.set_cursor(3, 0);
+        let area = Rect::new(0, 0, 20, 3);
+        let mut buffer = RatatuiBuffer::empty(area);
+        Widget::render(&editor, area, &mut buffer);
+        let rendered: Vec<String> = (0..3).map(|y| (0..20).map(|x| buffer.cell((x, y)).expect("cell in render area").symbol()).collect()).collect();
+        assert!(rendered[0].starts_with("# Heading …"));
+        assert!(rendered[1].starts_with("# Next"));
+        assert!(rendered[2].starts_with("tail"));
+        assert!(rendered.iter().all(|line| !line.contains("hidden")));
+    }
+
+    #[test]
+    fn paragraph_navigation_does_not_reopen_folded_sections() {
+        let mut editor = Editor::new(vec!["# Heading".into(), "hidden".into(), "".into(), "# Next".into()]);
+        assert!(editor.toggle_heading_fold(0));
+        editor.set_cursor(3, 0);
+        editor.move_cursor(CursorMove::ParagraphBack);
+        assert_eq!(editor.cursor().0, 0);
+        assert!(editor.is_heading_folded(0));
+        editor.move_cursor(CursorMove::ParagraphForward);
+        assert_eq!(editor.cursor().0, 3);
+        assert!(editor.is_heading_folded(0));
+    }
+
+    #[test]
+    fn highlight_window_reaches_visible_rows_beyond_a_large_fold() {
+        let mut lines = vec!["# Heading".to_string()];
+        lines.extend((0..100).map(|row| format!("hidden {row}")));
+        lines.extend(["# Next".to_string(), "visible".to_string()]);
+        let mut editor = Editor::new(lines);
+        editor.set_view_size(80, 10);
+        assert!(editor.toggle_heading_fold(0));
+        assert!(editor.active_highlight_rows().contains(&101));
+        assert!(editor.active_highlight_rows().contains(&102));
+    }
+
+    #[test]
+    fn fold_anchors_follow_line_edits_and_undo_redo() {
+        let mut editor = Editor::new(vec!["# First".into(), "body".into(), "# Second".into(), "tail".into()]);
+        assert!(editor.toggle_heading_fold(2));
+        editor.set_cursor(0, 0);
+        editor.insert_newline();
+        assert!(editor.is_heading_folded(3));
+        assert!(editor.undo());
+        assert!(editor.is_heading_folded(2));
+        assert!(editor.redo());
+        assert!(editor.is_heading_folded(3));
+    }
+
+    #[test]
+    fn enter_at_end_of_folded_heading_appends_after_its_existing_content() {
+        let mut editor = Editor::new(vec!["# Parent".into(), "first".into(), "existing".into(), "# Next".into()]);
+        editor.set_cursor(0, "# Parent".chars().count());
+        assert!(editor.toggle_heading_fold(0));
+
+        editor.insert_newline();
+
+        assert_eq!(editor.text(), "# Parent\nfirst\nexisting\n\n# Next");
+        assert_eq!(editor.cursor(), (3, 0));
+        assert!(!editor.is_heading_folded(0));
+        assert!(!editor.is_row_hidden(3));
+
+        assert!(editor.undo());
+        assert_eq!(editor.text(), "# Parent\nfirst\nexisting\n# Next");
+        assert!(!editor.is_heading_folded(0), "fold state is intentionally outside edit history");
+    }
+
+    #[test]
+    fn enter_at_end_of_folded_heading_reveals_a_trailing_nested_fold() {
+        let mut editor = Editor::new(vec!["# Parent".into(), "## Child".into(), "child content".into(), "# Next".into()]);
+        assert!(editor.toggle_heading_fold(1));
+        editor.set_cursor(0, "# Parent".chars().count());
+        assert!(editor.toggle_heading_fold(0));
+
+        editor.insert_newline();
+
+        assert_eq!(editor.text(), "# Parent\n## Child\nchild content\n\n# Next");
+        assert_eq!(editor.cursor(), (3, 0));
+        assert!(!editor.is_heading_folded(0));
+        assert!(!editor.is_heading_folded(1));
+        assert!(!editor.is_row_hidden(3));
+    }
+
+    #[test]
+    fn enter_inside_folded_heading_unfolds_before_splitting_the_heading() {
+        let mut editor = Editor::new(vec!["# Parent".into(), "existing".into(), "# Next".into()]);
+        editor.set_cursor(0, 5);
+        assert!(editor.toggle_heading_fold(0));
+
+        editor.insert_newline();
+
+        assert_eq!(editor.text(), "# Par\nent\nexisting\n# Next");
+        assert_eq!(editor.cursor(), (1, 0));
+        assert!(!editor.is_heading_folded(0));
+        assert!(!editor.is_row_hidden(1));
+    }
+
+    #[test]
+    fn only_h1_through_h3_outside_code_are_foldable() {
+        let editor = Editor::new(vec!["### Three".into(), "body".into(), "#### Four".into(), "body".into(), "```".into(), "# code heading".into(), "```".into()]);
+        assert_eq!(editor.foldable_heading_level(0), Some(3));
+        assert_eq!(editor.foldable_heading_level(2), None);
+        assert_eq!(editor.foldable_heading_level(5), None);
     }
 }

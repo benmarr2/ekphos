@@ -92,8 +92,11 @@ impl Editor {
         self.wrap_cache.invalidate_from(start.row);
         let removed_rows = end.row.saturating_sub(start.row);
         if removed_rows > 0 {
+            self.remap_folds_for_deleted_rows(start.row + 1, removed_rows);
             self.highlight_index.shift_rows_after(end.row + 1, -(removed_rows as isize));
             self.row_style_cache.borrow_mut().shift_rows_after(end.row + 1, -(removed_rows as isize));
+        } else {
+            self.reconcile_fold_anchors();
         }
         self.update_row_highlights(start.row);
         self.history.record(EditOperation::Delete { start, end, deleted_text: deleted.clone() }, cursor_before, start);
@@ -113,8 +116,11 @@ impl Editor {
         self.wrap_cache.invalidate_from(start.row);
         let removed_rows = end.row.saturating_sub(start.row);
         if removed_rows > 0 {
+            self.remap_folds_for_deleted_rows(start.row + 1, removed_rows);
             self.highlight_index.shift_rows_after(end.row + 1, -(removed_rows as isize));
             self.row_style_cache.borrow_mut().shift_rows_after(end.row + 1, -(removed_rows as isize));
+        } else {
+            self.reconcile_fold_anchors();
         }
         self.update_row_highlights(start.row);
         self.cursor.move_to(start.row, start.col);

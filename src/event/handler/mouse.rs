@@ -403,17 +403,17 @@ pub(super) fn handle_edit_mode_mouse(app: &mut App, mouse: crossterm::event::Mou
             }
         }
         MouseEventKind::ScrollUp => {
-            if app.editor.editor_scroll_top > 0 {
-                app.editor.editor_scroll_top = app.editor.editor_scroll_top.saturating_sub(3);
+            let new_top = app.editor.visible_row_at_offset(app.editor.editor_scroll_top, -3);
+            if new_top != app.editor.editor_scroll_top {
+                app.editor.editor_scroll_top = new_top;
                 app.editor.sync_scroll_offset();
             }
             constrain_cursor_to_viewport(app);
         }
         MouseEventKind::ScrollDown => {
-            let line_count = app.editor.line_count();
-            let max_scroll = line_count.saturating_sub(1);
-            if app.editor.editor_scroll_top < max_scroll {
-                app.editor.editor_scroll_top = (app.editor.editor_scroll_top + 3).min(max_scroll);
+            let new_top = app.editor.visible_row_at_offset(app.editor.editor_scroll_top, 3);
+            if new_top != app.editor.editor_scroll_top {
+                app.editor.editor_scroll_top = new_top;
                 app.editor.sync_scroll_offset();
             }
             constrain_cursor_to_viewport(app);
@@ -442,15 +442,16 @@ pub(super) fn handle_continuous_auto_scroll(app: &mut App) {
 /// Perform the actual scrolling in the given direction
 pub(super) fn perform_auto_scroll(app: &mut App, direction: i8) {
     if direction < 0 {
-        if app.editor.editor_scroll_top > 0 {
-            app.editor.editor_scroll_top = app.editor.editor_scroll_top.saturating_sub(1);
+        let new_top = app.editor.visible_row_at_offset(app.editor.editor_scroll_top, -1);
+        if new_top != app.editor.editor_scroll_top {
+            app.editor.editor_scroll_top = new_top;
             app.editor.sync_scroll_offset();
             app.editor.move_cursor(CursorMove::Up);
         }
     } else {
-        let max_scroll = app.editor.line_count().saturating_sub(app.editor.editor_view_height);
-        if app.editor.editor_scroll_top < max_scroll {
-            app.editor.editor_scroll_top += 1;
+        let new_top = app.editor.visible_row_at_offset(app.editor.editor_scroll_top, 1);
+        if new_top != app.editor.editor_scroll_top {
+            app.editor.editor_scroll_top = new_top;
             app.editor.sync_scroll_offset();
             app.editor.move_cursor(CursorMove::Down);
         }
@@ -471,7 +472,7 @@ pub(super) fn constrain_cursor_to_viewport(app: &mut App) {
     let line_count = app.editor.line_count();
     let max_row = line_count.saturating_sub(1);
     let viewport_top = app.editor.editor_scroll_top;
-    let viewport_bottom = (app.editor.editor_scroll_top + view_height.saturating_sub(1)).min(max_row);
+    let viewport_bottom = app.editor.visible_row_at_offset(viewport_top, view_height.saturating_sub(1) as isize);
     let clamped_row = if cursor_row < viewport_top {
         viewport_top
     } else if cursor_row > viewport_bottom {
@@ -482,8 +483,8 @@ pub(super) fn constrain_cursor_to_viewport(app: &mut App) {
     let scrolloff = app.state.config.editor.scrolloff as usize;
     let effective_scrolloff = scrolloff.min(view_height / 2);
     let final_row = if effective_scrolloff > 0 && clamped_row == cursor_row {
-        let scrolloff_top = viewport_top + effective_scrolloff;
-        let scrolloff_bottom = viewport_bottom.saturating_sub(effective_scrolloff);
+        let scrolloff_top = app.editor.visible_row_at_offset(viewport_top, effective_scrolloff as isize);
+        let scrolloff_bottom = app.editor.visible_row_at_offset(viewport_bottom, -(effective_scrolloff as isize));
         if cursor_row < scrolloff_top {
             scrolloff_top.min(max_row).min(viewport_bottom)
         } else if cursor_row > scrolloff_bottom {

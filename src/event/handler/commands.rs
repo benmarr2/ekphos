@@ -190,6 +190,7 @@ fn handle_structured_document_key(app: &mut App, key: crossterm::event::KeyEvent
 
 pub(super) fn app_command_available(app: &App, command: AppCommand) -> bool {
     match command {
+        AppCommand::InsertTask | AppCommand::ToggleEditorFold => false,
         AppCommand::FocusNext | AppCommand::FocusPrevious => !app.state.zen_mode,
         AppCommand::OpenJournal | AppCommand::CreateNote | AppCommand::CreateFolder | AppCommand::DeleteItem | AppCommand::RenameItem => !app.state.zen_mode,
         AppCommand::CutItem => !app.state.zen_mode && app.state.focus == Focus::Sidebar,
@@ -437,6 +438,7 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
         AppCommand::CancelCut => app.clear_cut_buffer(),
         AppCommand::ShrinkPanel => app.resize_focused_panel(-Config::PANEL_RESIZE_STEP_PERCENT),
         AppCommand::GrowPanel => app.resize_focused_panel(Config::PANEL_RESIZE_STEP_PERCENT),
+        AppCommand::InsertTask | AppCommand::ToggleEditorFold => {}
     }
     false
 }

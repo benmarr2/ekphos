@@ -16,11 +16,18 @@ pub fn render_wiki_autocomplete(f: &mut Frame, app: &App) {
     if let WikiAutocompleteState::Open { query, suggestions, selected_index, mode, target_note, .. } = &app.editor.wiki_autocomplete {
         let theme = &app.state.theme;
         let area = f.area();
-        let (cursor_row, cursor_col) = app.editor.cursor();
+        let (cursor_row, _) = app.editor.cursor();
         let editor_area = app.editor.editor_area;
         let border_offset = if app.state.zen_mode { 0 } else { 1 };
-        let cursor_screen_y = editor_area.y + border_offset + (cursor_row.saturating_sub(app.editor.editor_scroll_top)) as u16;
-        let cursor_screen_x = editor_area.x + border_offset + cursor_col as u16;
+        let row_offset = if app.editor.line_wrap_enabled() {
+            let rows_before_cursor: usize = (app.editor.editor_scroll_top..cursor_row).map(|row| app.editor.line_wrapped_height(row)).sum();
+            rows_before_cursor + app.editor.cursor_wrapped_position().0
+        } else {
+            app.editor.visible_row_distance(app.editor.editor_scroll_top, cursor_row)
+        };
+        let cursor_screen_y = editor_area.y + border_offset + row_offset as u16;
+        let display_col = if app.editor.line_wrap_enabled() { app.editor.cursor_wrapped_position().1 } else { app.editor.cursor_display_col().saturating_sub(app.editor.h_scroll_display_offset()) };
+        let cursor_screen_x = editor_area.x + border_offset + app.editor.content_left_offset() + display_col as u16;
         let is_alias_mode = *mode == WikiAutocompleteMode::Alias;
         let (scroll_offset, visible_count, total_lines) = if is_alias_mode {
             (0, 1, 1)
