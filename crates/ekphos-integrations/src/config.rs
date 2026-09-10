@@ -2,6 +2,7 @@ use crate::keybindings::KeybindingsConfig;
 pub use ekphos_editor::LineNumberMode;
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
@@ -27,6 +28,8 @@ pub struct Config {
     pub general: GeneralConfig,
     pub editor: EditorConfig,
     pub keybindings: KeybindingsConfig,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub frontmatter_templates: BTreeMap<String, String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralConfig {
@@ -281,6 +284,8 @@ struct ConfigFile {
     editor: EditorConfig,
     #[serde(default)]
     keybindings: KeybindingsConfig,
+    #[serde(default)]
+    frontmatter_templates: BTreeMap<String, String>,
     #[serde(flatten)]
     legacy_general: GeneralConfig,
 }
@@ -290,7 +295,7 @@ impl<'de> Deserialize<'de> for Config {
         D: serde::Deserializer<'de>,
     {
         let file = ConfigFile::deserialize(deserializer)?;
-        Ok(Self { general: file.general.unwrap_or(file.legacy_general), editor: file.editor, keybindings: file.keybindings })
+        Ok(Self { general: file.general.unwrap_or(file.legacy_general), editor: file.editor, keybindings: file.keybindings, frontmatter_templates: file.frontmatter_templates })
     }
 }
 impl Config {
@@ -346,11 +351,15 @@ impl Config {
         let config_dir = Self::config_dir();
         let config_path = Self::config_path();
         let themes_dir = Self::themes_dir();
+        let templates_dir = Self::templates_dir();
         if !config_dir.exists() {
             let _ = fs::create_dir_all(&config_dir);
         }
         if !themes_dir.exists() {
             let _ = fs::create_dir_all(&themes_dir);
+        }
+        if !templates_dir.exists() {
+            let _ = fs::create_dir_all(&templates_dir);
         }
         let default_theme_path = themes_dir.join("ekphos-dawn.toml");
         if !default_theme_path.exists() {
@@ -382,6 +391,12 @@ impl Config {
     }
     pub fn themes_dir_in(config_dir: &std::path::Path) -> PathBuf {
         config_dir.join("themes")
+    }
+    pub fn templates_dir() -> PathBuf {
+        Self::config_dir().join("templates")
+    }
+    pub fn templates_dir_in(config_dir: &std::path::Path) -> PathBuf {
+        config_dir.join("templates")
     }
     pub fn save(&self) -> std::io::Result<()> {
         self.save_to_dir(&Self::config_dir())
@@ -1046,6 +1061,18 @@ mod tests {
         let config: Config = toml::from_str("notes_dir = '/tmp/notes'").unwrap();
         let keymap = Keymap::from_config(&config.keybindings).unwrap();
         assert_eq!(keymap.binding_label(AppCommand::OpenGraph), "Ctrl+g");
+        assert!(config.frontmatter_templates.is_empty());
+    }
+    #[test]
+    fn frontmatter_template_mappings_round_trip_without_affecting_legacy_config() {
+        let content = "notes_dir = '/tmp/notes'\n\n[frontmatter_templates]\n'.' = 'default.yaml'\n'Projects' = 'project.yaml'\n";
+        let config: Config = toml::from_str(content).unwrap();
+        assert_eq!(config.frontmatter_templates.get("."), Some(&"default.yaml".to_string()));
+        assert_eq!(config.frontmatter_templates.get("Projects"), Some(&"project.yaml".to_string()));
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let reparsed: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(reparsed.frontmatter_templates, config.frontmatter_templates);
+        assert!(!toml::to_string_pretty(&Config::default()).unwrap().contains("frontmatter_templates"));
     }
     #[test]
     fn fresh_configs_default_to_standard_editing() {

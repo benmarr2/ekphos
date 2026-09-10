@@ -56,6 +56,34 @@ mode = "standard" # or "vim"
 
 Press `F6` to switch immediately and save the choice. Existing configurations without a `mode` setting continue to use Vim. Terminal emulators may handle clipboard shortcuts themselves; terminal paste and the editor context menu remain available.
 
+## Frontmatter Templates
+
+Ekphos can add saved frontmatter to new notes according to their folder. Put YAML
+fragments in `~/.config/ekphos/templates/`, without `---` delimiters. For example,
+`project.yaml` could contain:
+
+```yaml
+title: "{{title}}"
+created: "{{date}}"
+folder: "{{folder}}"
+tags: [project]
+```
+
+Map vault-relative folders to template files in `config.toml`:
+
+```toml
+[frontmatter_templates]
+"." = "default.yaml"
+"Projects" = "project.yaml"
+"Projects/Clients" = "client.yaml"
+```
+
+The closest mapped folder wins, so `Projects` also covers its subfolders. `.` is
+the vault root. Placeholders work in quoted YAML string values and expand to the
+note title, local date, and destination folder. Template file edits apply to the
+next note immediately; reload Ekphos config after changing the mappings. Journal
+notes keep their dedicated dated format.
+
 Press `?` for the app keybind reference, or visit [docs.ekphos.xyz](https://docs.ekphos.xyz) for comprehensive editing, theme, and configuration documentation.
 
 ## Interactive Demo

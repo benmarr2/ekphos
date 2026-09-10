@@ -1,6 +1,7 @@
 pub mod app;
 pub mod clipboard;
 pub mod config;
+mod frontmatter_templates;
 pub mod highlight;
 pub mod highlight_worker;
 pub mod image_service;

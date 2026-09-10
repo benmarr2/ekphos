@@ -471,7 +471,13 @@ impl App {
             self.state.dialog_error = Some(format!("Note '{name}' already exists"));
             return false;
         }
-        let content = format!("# {}\n\n", name);
+        let content = match crate::frontmatter_templates::initial_note_content(&self.state.config.frontmatter_templates, &self.dependencies.config_dir, &self.state.config.notes_path(), &file_path, name, self.dependencies.clock.today()) {
+            Ok(content) => content,
+            Err(error) => {
+                self.state.dialog_error = Some(error);
+                return false;
+            }
+        };
         if let Err(error) = ekphos_vault::save_note(&file_path, &content) {
             self.state.dialog_error = Some(format!("Failed to create note: {error}"));
             return false;
@@ -1058,5 +1064,104 @@ impl App {
 
     pub fn dismiss_welcome(&mut self) {
         self.state.show_welcome = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    struct FixedClock;
+
+    impl Clock for FixedClock {
+        fn now(&self) -> std::time::Instant {
+            std::time::Instant::now()
+        }
+
+        fn today(&self) -> NaiveDate {
+            NaiveDate::from_ymd_opt(2026, 9, 10).unwrap()
+        }
+    }
+
+    struct Fixture {
+        app: App,
+        root: PathBuf,
+        vault: PathBuf,
+        config_dir: PathBuf,
+    }
+
+    impl Fixture {
+        fn new(mappings: impl IntoIterator<Item = (&'static str, &'static str)>) -> Self {
+            let id = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir().join(format!("ekphos-note-templates-{}-{id}", std::process::id()));
+            let vault = root.join("vault");
+            let config_dir = root.join("config");
+            fs::create_dir_all(&vault).unwrap();
+            fs::create_dir_all(Config::templates_dir_in(&config_dir)).unwrap();
+            let mut config = Config { general: crate::config::GeneralConfig { welcome_shown: false, check_updates: false, ..Default::default() }, ..Default::default() };
+            config.frontmatter_templates = mappings.into_iter().map(|(folder, template)| (folder.to_string(), template.to_string())).collect();
+            let mut dependencies = AppDependencies::headless(config_dir.clone(), root.join("cache"));
+            dependencies.clock = Arc::new(FixedClock);
+            let app = App::new_injected(config, vault.clone(), None, dependencies);
+            Self { app, root, vault, config_dir }
+        }
+
+        fn write_template(&self, name: &str, content: &str) {
+            fs::write(Config::templates_dir_in(&self.config_dir).join(name), content).unwrap();
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn dialog_created_note_uses_the_root_template() {
+        let mut fixture = Fixture::new([(".", "default.yaml")]);
+        fixture.write_template("default.yaml", "title: \"{{title}}\"\ncreated: \"{{date}}\"\nfolder: \"{{folder}}\"\n");
+        assert!(fixture.app.create_note("Manual"));
+        let content = fs::read_to_string(fixture.vault.join("Manual.md")).unwrap();
+        let (frontmatter, _) = ekphos_vault::Frontmatter::parse(&content);
+        let frontmatter = frontmatter.unwrap();
+        assert_eq!(frontmatter.title.as_deref(), Some("Manual"));
+        assert_eq!(frontmatter.extra["created"].as_str(), Some("2026-09-10"));
+        assert_eq!(frontmatter.extra["folder"].as_str(), Some("."));
+        assert!(content.ends_with("# Manual\n\n"));
+    }
+
+    #[test]
+    fn wiki_created_note_inherits_a_template_before_creating_folders() {
+        let mut fixture = Fixture::new([("Projects", "project.yaml")]);
+        fixture.write_template("project.yaml", "folder: \"{{folder}}\"\ntags: [project]\n");
+        assert!(fixture.app.create_note_from_wiki_target("Projects/2026/Wiki Note"));
+        let content = fs::read_to_string(fixture.vault.join("Projects/2026/Wiki Note.md")).unwrap();
+        let (frontmatter, _) = ekphos_vault::Frontmatter::parse(&content);
+        let frontmatter = frontmatter.unwrap();
+        assert_eq!(frontmatter.tags, ["project"]);
+        assert_eq!(frontmatter.extra["folder"].as_str(), Some("Projects/2026"));
+    }
+
+    #[test]
+    fn broken_wiki_template_creates_neither_note_nor_directories() {
+        let mut fixture = Fixture::new([("Projects", "missing.yaml")]);
+        assert!(!fixture.app.create_note_from_wiki_target("Projects/2026/Wiki Note"));
+        assert!(!fixture.vault.join("Projects").exists());
+        let toast = fixture.app.state.toast.as_ref().expect("template error toast");
+        assert_eq!(toast.kind, ToastKind::Error);
+        assert!(toast.message.contains("missing.yaml"));
+    }
+
+    #[test]
+    fn broken_dialog_template_keeps_the_note_uncreated_and_reports_the_error() {
+        let mut fixture = Fixture::new([(".", "missing.yaml")]);
+        assert!(!fixture.app.create_note("Manual"));
+        assert!(!fixture.vault.join("Manual.md").exists());
+        assert!(fixture.app.state.dialog_error.as_deref().is_some_and(|error| error.contains("missing.yaml")));
     }
 }

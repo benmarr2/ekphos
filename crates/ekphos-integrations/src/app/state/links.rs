@@ -581,13 +581,19 @@ impl App {
         if file_path.exists() {
             return false;
         }
+        let title = target.rsplit('/').next().unwrap_or(target);
+        let content = match crate::frontmatter_templates::initial_note_content(&self.state.config.frontmatter_templates, &self.dependencies.config_dir, &self.state.config.notes_path(), &file_path, title, self.dependencies.clock.today()) {
+            Ok(content) => content,
+            Err(error) => {
+                self.show_error_toast(error);
+                return false;
+            }
+        };
         if let Some(parent) = file_path.parent() {
             if !parent.exists() && fs::create_dir_all(parent).is_err() {
                 return false;
             }
         }
-        let title = target.rsplit('/').next().unwrap_or(target);
-        let content = format!("# {}\n\n", title);
         if ekphos_vault::save_note(&file_path, &content).is_err() {
             return false;
         }
