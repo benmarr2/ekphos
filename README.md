@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/ekphos)](https://crates.io/crates/ekphos)
 [![Rust](https://img.shields.io/badge/rust-1.90%2B-orange)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/crates/l/ekphos)](https://github.com/hanebox/ekphos/blob/main/LICENSE)
+[![License](https://img.shields.io/crates/l/ekphos)](https://github.com/nostacks/ekphos/blob/main/LICENSE)
 
 A lightweight, fast, terminal-based markdown research tool built with Rust.
 
@@ -10,7 +10,7 @@ A lightweight, fast, terminal-based markdown research tool built with Rust.
 
 ## Documentation
 
-**Go to [Documentation](https://ekphos.netlify.app/docs)**
+**Go to [Documentation](https://ekphos.nostacks.xyz/docs)**
 
 ## Quick Start
 
@@ -48,9 +48,9 @@ nix build .#default         # Nix package
 docker build -t ekphos .    # Linux container
 ```
 
-## Discussion
+## Community
 
-- Open a discussion in the [repository](https://github.com/hanebox/ekphos/discussions)
+- Join the [NoStacks Discord](https://discord.gg/R5dEQZfvb) for help, ideas, conversations, and project updates
 
 ## Disclaimer
 
@@ -59,7 +59,7 @@ This project is in early development. There may be breaking changes and bugs in 
 ## Contributing
 
 ```bash
-git clone https://github.com/hanebox/ekphos.git
+git clone https://github.com/nostacks/ekphos.git
 cd ekphos
 ```
 
@@ -68,7 +68,7 @@ cd ekphos
 3. Make your changes
 4. Submit a PR to the `main` branch
 
-To contribute to the documentation, see [ekphos-docs](https://github.com/hanebox/ekphos-docs).
+Read the [Ekphos documentation](https://ekphos.nostacks.xyz/docs).
 
 [![Packaging status](https://repology.org/badge/vertical-allrepos/ekphos.svg)](https://repology.org/project/ekphos/versions)
 

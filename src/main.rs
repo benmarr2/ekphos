@@ -76,7 +76,7 @@ fn check_for_updates() -> bool {
     println!("    Homebrew: brew upgrade ekphos");
     println!("    AUR:      yay -S ekphos");
     println!();
-    println!("  Changelog: https://github.com/hanebox/ekphos/releases");
+    println!("  Changelog: https://github.com/nostacks/ekphos/releases");
     println!();
     if already_skipped {
         println!("  Please update. Launching in 1 second...");
@@ -109,7 +109,7 @@ fn save_skipped_version(version: &str) {
     let _ = fs::write(path, version);
 }
 fn get_latest_version() -> Option<String> {
-    ekphos_integrations::release::latest_github_release("hanebox/ekphos", "ekphos", std::time::Duration::from_secs(3))
+    ekphos_integrations::release::latest_github_release("nostacks/ekphos", "ekphos", std::time::Duration::from_secs(3))
 }
 fn is_newer_version(remote: &str, local: &str) -> bool {
     let parse = |v: &str| -> (u32, u32, u32) {

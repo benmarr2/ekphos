@@ -33,7 +33,7 @@ edition = "2021"
 rust-version = "1.90"
 authors = ["Ekphos Contributors"]
 license = "MIT"
-repository = "https://github.com/hanebox/ekphos"
+repository = "https://github.com/nostacks/ekphos"
 
 [workspace.dependencies]
 ekphos-bases = { version = "=0.25.10", path = "crates/ekphos-bases" }

@@ -188,7 +188,7 @@ Use `---`, `***`, or `___` on their own line to draw a divider:
 
 Embed images with `![alt](path/to/image.png)`. Press `Enter`, `o`, or click to open in system viewer.
 
-![Ekphos Screenshot](https://raw.githubusercontent.com/hanebox/ekphos/release/examples/ekphos-screenshot.png)
+![Ekphos Screenshot](https://raw.githubusercontent.com/nostacks/ekphos/release/examples/ekphos-screenshot.png)
 
 Inline preview works in terminals with image support (iTerm2, Kitty, WezTerm, Ghostty, Sixel).
 

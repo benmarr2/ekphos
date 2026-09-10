@@ -45,7 +45,7 @@
 
           meta = with pkgs.lib; {
             description = "A lightweight, fast, terminal-based markdown research tool";
-            homepage = "https://github.com/hanebox/ekphos";
+            homepage = "https://github.com/nostacks/ekphos";
             license = licenses.mit;
             mainProgram = "ekphos";
             platforms = platforms.linux ++ platforms.darwin;
