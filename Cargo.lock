@@ -790,6 +790,7 @@ version = "0.25.10"
 dependencies = [
  "crossterm",
  "ekphos-core",
+ "ekphos-tasks",
  "ratatui",
  "serde",
  "unicode-width",

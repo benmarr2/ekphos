@@ -1,8 +1,9 @@
 use super::*;
 
 impl Editor {
-    /// Turn the current plain or unordered-list line into an unchecked task.
-    /// Existing tasks and non-text Markdown blocks are intentionally unchanged.
+    /// Turn the current plain, unordered-list, or checklist line into a managed
+    /// task. New checkboxes are unchecked; an existing checklist keeps its
+    /// state. Existing managed tasks and non-text Markdown blocks are unchanged.
     pub fn insert_task_on_current_line(&mut self) -> bool {
         if self.has_selection() {
             return false;
@@ -17,12 +18,20 @@ impl Editor {
         let trimmed = line.trim_start();
         let indent_col = line.chars().count() - trimmed.chars().count();
         let (insert_col, text) = match ListPrefix::detect(line) {
-            Some(ListPrefix::Task { .. }) | Some(ListPrefix::Ordered { .. }) => return false,
-            Some(ListPrefix::Unordered { .. }) => (indent_col + 2, "[ ] "),
+            Some(ListPrefix::Checkbox { managed: true, .. }) | Some(ListPrefix::Ordered { .. }) => return false,
+            Some(ListPrefix::Checkbox { managed: false, .. }) => {
+                let prefix_end = indent_col + 5;
+                if line.chars().count() == prefix_end {
+                    (prefix_end, " #task ")
+                } else {
+                    (prefix_end + 1, "#task ")
+                }
+            }
+            Some(ListPrefix::Unordered { .. }) => (indent_col + 2, "[ ] #task "),
             None if ekphos_core::markdown::heading(line).is_some() || trimmed.starts_with('>') || trimmed.starts_with('|') || trimmed.starts_with("<details") || trimmed.starts_with("<summary") || ekphos_core::markdown::is_display_math_delimiter(line) => {
                 return false;
             }
-            None => (indent_col, "- [ ] "),
+            None => (indent_col, "- [ ] #task "),
         };
         self.buffer.insert_str(cursor_before.row, insert_col, text);
         self.wrap_cache.invalidate_line(cursor_before.row);

@@ -301,7 +301,7 @@ pub struct WikiLinkRange {
 #[derive(Debug, Clone)]
 enum ListPrefix {
     Unordered { indent: String, marker: char },
-    Task { indent: String, marker: char },
+    Checkbox { indent: String, marker: char, managed: bool },
     Ordered { indent: String, number: usize },
 }
 
@@ -314,7 +314,8 @@ impl ListPrefix {
             if trimmed.len() >= 5 {
                 let after_marker = &trimmed[2..];
                 if matches!(after_marker, "[ ]" | "[x]" | "[X]") || after_marker.starts_with("[ ] ") || after_marker.starts_with("[x] ") || after_marker.starts_with("[X] ") {
-                    return Some(ListPrefix::Task { indent, marker });
+                    let body = after_marker.get(3..).unwrap_or("").trim_start();
+                    return Some(ListPrefix::Checkbox { indent, marker, managed: ekphos_tasks::has_task_marker(body) });
                 }
             }
             return Some(ListPrefix::Unordered { indent, marker });
@@ -334,8 +335,8 @@ impl ListPrefix {
             ListPrefix::Unordered { indent, marker } => {
                 format!("{}{} ", indent, marker)
             }
-            ListPrefix::Task { indent, marker } => {
-                format!("{}{} [ ] ", indent, marker)
+            ListPrefix::Checkbox { indent, marker, managed } => {
+                format!("{}{} [ ] {}", indent, marker, if *managed { "#task " } else { "" })
             }
             ListPrefix::Ordered { indent, number } => {
                 format!("{}{}. ", indent, number + 1)
@@ -346,8 +347,8 @@ impl ListPrefix {
         let trimmed = line.trim_start();
         let indent_len = line.chars().count() - trimmed.chars().count();
         match self {
-            ListPrefix::Unordered { .. } => indent_len + 2, // "- " or "* " or "+ "
-            ListPrefix::Task { .. } => indent_len + 6,      // "- [ ] "
+            ListPrefix::Unordered { .. } => indent_len + 2,                                     // "- " or "* " or "+ "
+            ListPrefix::Checkbox { managed, .. } => indent_len + if *managed { 12 } else { 6 }, // "- [ ] #task " or "- [ ] "
             ListPrefix::Ordered { number, .. } => {
                 indent_len + number.to_string().len() + 2 // "N. "
             }
@@ -678,26 +679,44 @@ mod tests {
     }
 
     #[test]
-    fn task_shortcut_formats_plain_and_unordered_lines_once() {
-        let mut editor = Editor::new(vec!["  write docs".into(), "\t* ship release".into(), "- [x] done ✅ 2026-09-09".into(), "- [ ]".into()]);
+    fn task_shortcut_formats_plain_unordered_and_checklist_lines_once() {
+        let mut editor = Editor::new(vec!["  write docs".into(), "\t* ship release".into(), "- [x] #task done ✅ 2026-09-09".into(), "- [ ] checklist".into(), "- [ ]".into(), "- [x] completed checklist".into()]);
         editor.set_cursor(0, 7);
         assert!(editor.insert_task_on_current_line());
-        assert_eq!(editor.line(0), Some("  - [ ] write docs"));
-        assert_eq!(editor.cursor(), (0, 13));
+        assert_eq!(editor.line(0), Some("  - [ ] #task write docs"));
+        assert_eq!(editor.cursor(), (0, 19));
         assert!(editor.undo());
         assert_eq!(editor.line(0), Some("  write docs"));
         assert!(editor.redo());
-        assert_eq!(editor.line(0), Some("  - [ ] write docs"));
+        assert_eq!(editor.line(0), Some("  - [ ] #task write docs"));
 
         editor.set_cursor(1, 3);
         assert!(editor.insert_task_on_current_line());
-        assert_eq!(editor.line(1), Some("\t* [ ] ship release"));
+        assert_eq!(editor.line(1), Some("\t* [ ] #task ship release"));
         editor.set_cursor(2, 0);
         assert!(!editor.insert_task_on_current_line());
-        assert_eq!(editor.line(2), Some("- [x] done ✅ 2026-09-09"));
+        assert_eq!(editor.line(2), Some("- [x] #task done ✅ 2026-09-09"));
         editor.set_cursor(3, 0);
-        assert!(!editor.insert_task_on_current_line());
-        assert_eq!(editor.line(3), Some("- [ ]"));
+        assert!(editor.insert_task_on_current_line());
+        assert_eq!(editor.line(3), Some("- [ ] #task checklist"));
+        editor.set_cursor(4, 0);
+        assert!(editor.insert_task_on_current_line());
+        assert_eq!(editor.line(4), Some("- [ ] #task "));
+        editor.set_cursor(5, 0);
+        assert!(editor.insert_task_on_current_line());
+        assert_eq!(editor.line(5), Some("- [x] #task completed checklist"));
+    }
+
+    #[test]
+    fn newline_preserves_checklist_and_managed_task_kinds() {
+        let mut editor = Editor::new(vec!["- [ ] checklist item".into(), "- [ ] #task managed item".into()]);
+        editor.set_cursor(0, editor.line(0).unwrap().chars().count());
+        editor.insert_newline();
+        assert_eq!(editor.line(1), Some("- [ ] "));
+
+        editor.set_cursor(2, editor.line(2).unwrap().chars().count());
+        editor.insert_newline();
+        assert_eq!(editor.line(3), Some("- [ ] #task "));
     }
 
     #[test]

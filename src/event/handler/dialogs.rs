@@ -704,8 +704,8 @@ mod tests {
         let root = std::env::temp_dir().join(format!("ekphos-tasks-{}-{id}", std::process::id()));
         let vault = root.join("vault");
         std::fs::create_dir_all(&vault).unwrap();
-        std::fs::write(vault.join("fixture.md"), "# Fixture\n\n- [ ] alpha 📅 2026-06-01 ⏫\n").unwrap();
-        std::fs::write(vault.join("other.md"), "# Other\n\n- [ ] beta\n- [x] gamma ✅ 2026-01-01\n").unwrap();
+        std::fs::write(vault.join("fixture.md"), "# Fixture\n\n- [ ] #task alpha 📅 2026-06-01 ⏫\n- [ ] fixture checklist\n").unwrap();
+        std::fs::write(vault.join("other.md"), "# Other\n\n- [ ] #task beta\n- [x] #task gamma ✅ 2026-01-01\n").unwrap();
         let config = Config { general: crate::config::GeneralConfig { welcome_shown: false, check_updates: false, ..Default::default() }, ..Default::default() };
         let dependencies = AppDependencies::headless(root.join("config"), root.join("cache"));
         let mut app = App::new_injected(config, vault.clone(), None, dependencies);
@@ -772,7 +772,7 @@ mod tests {
         let today = app.today();
         handle_task_view_dialog(&mut app, key(KeyCode::Char(' ')));
         let body = std::fs::read_to_string(vault.join("other.md")).unwrap();
-        assert_eq!(body, format!("# Other\n\n- [x] beta ✅ {today}\n- [x] gamma ✅ 2026-01-01\n"));
+        assert_eq!(body, format!("# Other\n\n- [x] #task beta ✅ {today}\n- [x] #task gamma ✅ 2026-01-01\n"));
         let started = std::time::Instant::now();
         while app.tasks.visible.len() != 1 && started.elapsed() < std::time::Duration::from_secs(5) {
             app.poll_background();

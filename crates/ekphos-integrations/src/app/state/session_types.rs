@@ -279,7 +279,7 @@ pub enum ContentItem {
     Image { path: DocumentRange, source_line: u32 },
     CodeLine { range: DocumentRange, source_line: u32 },
     CodeFence { language: DocumentRange, source_line: u32 },
-    TaskItem { text: DocumentRange, checked: bool, source_line: u32, indent: u16 },
+    TaskItem { text: DocumentRange, checked: bool, source_line: u32, indent: u16, managed: bool },
     TableRow { cells: Box<[DocumentRange]>, table: u32, source_line: u32, is_separator: bool, is_header: bool },
     Details { summary: Option<DocumentRange>, content_lines: Box<[u32]>, source_line: u32 },
     FrontmatterLine { key: DocumentRange, value: DocumentRange, source_line: u32 },

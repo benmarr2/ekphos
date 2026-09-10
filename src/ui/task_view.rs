@@ -67,7 +67,7 @@ impl Columns {
     }
 }
 
-/// Full-screen aggregate task view: every checkbox task in the vault, with
+/// Full-screen aggregate task view: every `#task` checkbox in the vault, with
 /// status/due/priority/text filters and in-place toggling.
 pub fn render_task_view(f: &mut Frame, app: &mut App) {
     let area = f.area();
@@ -222,7 +222,7 @@ fn render_empty_state(f: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     let message = if app.tasks_loading() && app.tasks.tasks.is_empty() {
         "Collecting tasks…"
     } else if app.tasks.tasks.is_empty() {
-        "No tasks in this vault yet. Add a `- [ ]` line to any note."
+        "No tasks in this vault yet. Add a `- [ ] #task` line to any note."
     } else {
         "No tasks match the current filters"
     };

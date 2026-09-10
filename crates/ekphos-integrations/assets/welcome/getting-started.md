@@ -62,11 +62,23 @@ Press `?` for the app keybind reference, or visit [docs.ekphos.xyz](https://docs
 
 Try these interactive elements! Press `Space` or click to interact:
 
-### Task Lists
+### Checklists and Tasks
 
-- [ ] Try pressing Space on this checkbox
-- [ ] Or click on a task to toggle it
-- [x] This one is already completed
+- [ ] Try pressing Space on this checklist item
+- [ ] Or click the checkbox to toggle it
+- [x] This checklist item is already complete
+
+Add `#task` to a checkbox when you want Ekphos to manage it as a task. Managed
+tasks can carry due dates and priorities, and `Ctrl+y` aggregates them into one
+filterable view. Plain checklists stay out of Task View.
+
+- [ ] #task Pay rent +home 📅 2026-06-01 ⏫
+- [ ] #task Draft weekly review 🔼
+- [ ] #task Someday: learn Nix 🔽
+
+Tokens: `📅 2026-06-01` due date, `🛫 2026-06-01` start date, `⏫`/`🔼`/`🔽` priority.
+Completing a managed task (here or in Task View) stamps a `✅` completion date
+automatically. It's all plain Markdown, so Obsidian's Tasks plugin reads the same lines.
 
 ### Wikilinks
 

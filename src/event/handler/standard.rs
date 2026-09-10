@@ -210,11 +210,11 @@ mod tests {
         let mut fixture = StandardApp::new();
         fixture.app.editor.set_cursor(0, 5);
         handle_edit_mode(&mut fixture.app, key(KeyCode::Char('l'), KeyModifiers::CONTROL));
-        assert_eq!(fixture.app.editor.text(), "- [ ] hello world");
-        assert_eq!(fixture.app.editor.cursor(), (0, 11));
+        assert_eq!(fixture.app.editor.text(), "- [ ] #task hello world");
+        assert_eq!(fixture.app.editor.cursor(), (0, 17));
 
         handle_edit_mode(&mut fixture.app, key(KeyCode::Char('l'), KeyModifiers::CONTROL));
-        assert_eq!(fixture.app.editor.text(), "- [ ] hello world");
+        assert_eq!(fixture.app.editor.text(), "- [ ] #task hello world");
         assert!(fixture.app.editor.undo());
         assert_eq!(fixture.app.editor.text(), "hello world");
         assert_eq!(fixture.app.editor.cursor(), (0, 5));

@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn task_view_aggregates_tasks_with_metadata() {
-        let mut fixture = task_view_fixture("- [ ] alpha 📅 2026-06-01 ⏫\nplain line\n- [x] beta ✅ 2026-01-01\n");
+        let mut fixture = task_view_fixture("- [ ] #task alpha 📅 2026-06-01 ⏫\n- [ ] regular checklist\nplain line\n- [x] #task beta ✅ 2026-01-01\n");
         assert_eq!(fixture.app.tasks.tasks.len(), 2);
         assert_eq!(fixture.app.tasks.visible.len(), 1);
         fixture.app.tasks.status = crate::app::TaskStatusFilter::All;
@@ -377,6 +377,8 @@ mod tests {
         assert!(content.contains("1 open · 2 total"), "{content}");
         assert!(content.contains("[ ] alpha"), "{content}");
         assert!(content.contains("[x] beta"), "{content}");
+        assert!(!content.contains("regular checklist"), "{content}");
+        assert!(!content.contains("#task"), "{content}");
         assert!(content.contains("⏫"), "{content}");
         assert!(content.contains("2026-06-01"), "{content}");
         assert!(content.contains("✅"), "{content}");
@@ -391,7 +393,7 @@ mod tests {
 
     #[test]
     fn task_view_columns_align_across_glyph_widths_and_selection_fills_the_row() {
-        let mut fixture = task_view_fixture("- [ ] wide 📅 2026-06-01 ⏫\n- [ ] plain\n- [ ] 日本語のタスク 🔼\n");
+        let mut fixture = task_view_fixture("- [ ] #task wide 📅 2026-06-01 ⏫\n- [ ] #task plain\n- [ ] #task 日本語のタスク 🔼\n");
         fixture.app.tasks.selected = 1;
         let buffer = draw(&mut fixture, 80, 24);
         let rows: Vec<u16> = (0..24).filter(|&y| row_text(&buffer, y).contains("[ ]")).collect();
@@ -411,7 +413,7 @@ mod tests {
 
     #[test]
     fn task_view_scrolls_to_the_selection_and_drops_columns_when_narrow() {
-        let content: String = (0..40).map(|index| format!("- [ ] filler task number {index} 📅 2026-06-01\n")).collect();
+        let content: String = (0..40).map(|index| format!("- [ ] #task filler task number {index} 📅 2026-06-01\n")).collect();
         let mut fixture = task_view_fixture(&content);
         assert_eq!(fixture.app.tasks.visible.len(), 40);
         fixture.app.task_select_last();
@@ -431,7 +433,7 @@ mod tests {
 
     #[test]
     fn task_view_survives_tiny_geometry_and_shows_empty_states() {
-        let mut fixture = task_view_fixture("- [ ] only\n");
+        let mut fixture = task_view_fixture("- [ ] #task only\n");
         for (width, height) in [(1, 1), (2, 2), (5, 3), (6, 3), (12, 4), (20, 3)] {
             let _ = draw(&mut fixture, width, height);
         }

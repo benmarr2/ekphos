@@ -42,9 +42,9 @@ $$
 
 ### Tasks with Links
 
-- [ ] Check out the [[Getting Started]] guide
-- [ ] Try pressing `Space` on this checkbox
-- [x] Complete the tutorial
+- [ ] #task Check out the [[Getting Started]] guide
+- [ ] #task Try pressing `Space` on this checkbox
+- [x] #task Complete the tutorial
 
 ### Collapsible Content
 

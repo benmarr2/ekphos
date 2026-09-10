@@ -1,11 +1,11 @@
 //! Markdown task parsing for Ekphos.
 //!
-//! Tasks are plain Markdown list items with a GFM checkbox, optionally carrying
+//! Tasks are GFM checkbox list items marked with `#task`, optionally carrying
 //! Obsidian Tasks plugin-style emoji metadata on the line itself:
 //!
 //! ```text
-//! - [ ] Pay rent +home 📅 2026-06-01 ⏫
-//! - [x] Submit report ✅ 2026-05-30
+//! - [ ] #task Pay rent +home 📅 2026-06-01 ⏫
+//! - [x] #task Submit report ✅ 2026-05-30
 //! ```
 //!
 //! Because the metadata lives on the task line, tasks stay portable Markdown:
@@ -108,14 +108,17 @@ pub struct ParsedTaskLine<'a> {
     pub start: Option<NaiveDate>,
     pub done: Option<NaiveDate>,
     pub priority: Option<Priority>,
+    pub managed: bool,
 }
 
 const TASK_PREFIX_LEN: usize = 6;
+pub const TASK_MARKER: &str = "#task";
 
-/// Parse a Markdown line as a checkbox task. Accepts `-`, `*`, and `+`
-/// markers with ` `, `x`, or `X` checkbox states, matching the editor's
-/// list-continuation rules.
-pub fn parse_task_line(line: &str) -> Option<ParsedTaskLine<'_>> {
+/// Parse a Markdown line as a checkbox item. Accepts `-`, `*`, and `+` markers
+/// with ` `, `x`, or `X` checkbox states, matching the editor's
+/// list-continuation rules. `managed` reports whether the body contains the
+/// standalone `#task` marker used by the aggregate task view.
+pub fn parse_checkbox_line(line: &str) -> Option<ParsedTaskLine<'_>> {
     let trimmed = line.trim_start_matches([' ', '\t']);
     let leading = line.len().saturating_sub(trimmed.len());
     let bytes = trimmed.as_bytes();
@@ -139,20 +142,35 @@ pub fn parse_task_line(line: &str) -> Option<ParsedTaskLine<'_>> {
     let start = extract_date(body, "🛫");
     let done = extract_date(body, "✅");
     let priority = Priority::from_token(body.trim()).or_else(|| find_priority(body));
-    Some(ParsedTaskLine { body, body_offset: leading + TASK_PREFIX_LEN, indent, checked, due, start, done, priority })
+    let managed = has_task_marker(body);
+    Some(ParsedTaskLine { body, body_offset: leading + TASK_PREFIX_LEN, indent, checked, due, start, done, priority, managed })
 }
 
-/// Rewrite a task line with the checkbox flipped. Completing stamps a `✅`
-/// completion date; reopening removes it. Returns `None` when the line is not
-/// a task.
+/// Parse a managed task line. Plain GFM checkbox items remain interactive
+/// checklists but are excluded from task aggregation.
+pub fn parse_task_line(line: &str) -> Option<ParsedTaskLine<'_>> {
+    let parsed = parse_checkbox_line(line)?;
+    parsed.managed.then_some(parsed)
+}
+
+/// Return whether text contains the standalone, case-insensitive `#task`
+/// marker. Surrounding sentence punctuation is allowed; longer tags such as
+/// `#tasks` and `#task/work` are different tags.
+pub fn has_task_marker(body: &str) -> bool {
+    body.split_whitespace().any(is_task_marker_token)
+}
+
+/// Rewrite a checkbox line with its state flipped. Managed tasks receive or
+/// lose a `✅` completion date; plain checklists only change checkbox state.
+/// Returns `None` when the line is not a checkbox item.
 pub fn set_checked(line: &str, checked: bool, today: NaiveDate) -> Option<String> {
-    parse_task_line(line)?;
+    let parsed = parse_checkbox_line(line)?;
     let trimmed = line.trim_start_matches([' ', '\t']);
     let leading = line.len().saturating_sub(trimmed.len());
     let mut updated = line.to_string();
     let state_index = leading + 3;
     updated.replace_range(state_index..state_index + 1, if checked { "x" } else { " " });
-    if checked {
+    if checked && parsed.managed {
         match done_token_range(&updated) {
             Some(range) => {
                 updated.replace_range(range, &format!(" ✅ {today}"));
@@ -163,8 +181,10 @@ pub fn set_checked(line: &str, checked: bool, today: NaiveDate) -> Option<String
                 updated.push_str(&format!(" ✅ {today}"));
             }
         }
-    } else if let Some(range) = done_token_range(&updated) {
-        updated.replace_range(range, "");
+    } else if !checked && parsed.managed {
+        if let Some(range) = done_token_range(&updated) {
+            updated.replace_range(range, "");
+        }
     }
     Some(updated)
 }
@@ -176,6 +196,9 @@ pub fn strip_metadata(body: &str) -> String {
     let mut words = body.split_whitespace().peekable();
     let mut parts: Vec<&str> = Vec::new();
     while let Some(word) = words.next() {
+        if is_task_marker_token(word) {
+            continue;
+        }
         if Priority::from_token(word).is_some() {
             continue;
         }
@@ -274,6 +297,10 @@ fn find_priority(body: &str) -> Option<Priority> {
     })
 }
 
+fn is_task_marker_token(word: &str) -> bool {
+    word.trim_matches(|character: char| matches!(character, '(' | ')' | '[' | ']' | '{' | '}' | ',' | '.' | ';' | ':' | '!' | '?')).eq_ignore_ascii_case(TASK_MARKER)
+}
+
 /// Byte range covering an existing `✅ YYYY-MM-DD` token plus the separating
 /// space before it and one after it, so its removal leaves clean spacing.
 fn done_token_range(line: &str) -> Option<std::ops::Range<usize>> {
@@ -301,36 +328,47 @@ mod tests {
     }
 
     #[test]
-    fn parses_dash_star_and_plus_markers() {
-        for marker in ["- [ ] task", "* [x] task", "+ [X] task"] {
-            let parsed = parse_task_line(marker).expect("task");
-            assert_eq!(parsed.body, "task");
+    fn parses_dash_star_and_plus_checkbox_markers() {
+        for marker in ["- [ ] checklist", "* [x] checklist", "+ [X] checklist"] {
+            let parsed = parse_checkbox_line(marker).expect("checkbox");
+            assert_eq!(parsed.body, "checklist");
             assert_eq!(parsed.checked, marker.contains("[x]") || marker.contains("[X]"));
             assert_eq!(parsed.indent, 0);
             assert_eq!(parsed.body_offset, 6);
+            assert!(!parsed.managed);
         }
-        assert!(parse_task_line("- task").is_none());
-        assert!(parse_task_line("-[]task").is_none());
-        assert!(parse_task_line("regular text").is_none());
+        assert!(parse_checkbox_line("- task").is_none());
+        assert!(parse_checkbox_line("-[]task").is_none());
+        assert!(parse_checkbox_line("regular text").is_none());
+    }
+
+    #[test]
+    fn managed_tasks_require_a_standalone_task_marker() {
+        for line in ["- [ ] #task Pay rent", "* [x] Pay rent #TASK", "+ [X] Pay rent (#task)."] {
+            assert!(parse_task_line(line).is_some(), "{line}");
+        }
+        for line in ["- [ ] checklist", "- [ ] #tasks", "- [ ] #task/work", "- [ ] link[[#task]]"] {
+            assert!(parse_task_line(line).is_none(), "{line}");
+        }
     }
 
     #[test]
     fn parses_indented_tasks_with_tab_stops() {
-        let parsed = parse_task_line("  - [ ] nested").unwrap();
+        let parsed = parse_task_line("  - [ ] #task nested").unwrap();
         assert_eq!(parsed.indent, 2);
-        let parsed = parse_task_line("\t- [ ] nested").unwrap();
+        let parsed = parse_task_line("\t- [ ] #task nested").unwrap();
         assert_eq!(parsed.indent, 4);
     }
 
     #[test]
     fn extracts_due_start_done_and_priority() {
-        let parsed = parse_task_line("- [ ] Pay rent 🛫 2026-05-01 📅 2026-06-01 ⏫").unwrap();
+        let parsed = parse_task_line("- [ ] #task Pay rent 🛫 2026-05-01 📅 2026-06-01 ⏫").unwrap();
         assert_eq!(parsed.due, Some(date("2026-06-01")));
         assert_eq!(parsed.start, Some(date("2026-05-01")));
         assert_eq!(parsed.done, None);
         assert_eq!(parsed.priority, Some(Priority::High));
 
-        let parsed = parse_task_line("- [x] Submitted ✅ 2026-05-30 🔽").unwrap();
+        let parsed = parse_task_line("- [x] Submitted #task ✅ 2026-05-30 🔽").unwrap();
         assert_eq!(parsed.done, Some(date("2026-05-30")));
         assert_eq!(parsed.priority, Some(Priority::Low));
         assert!(parsed.checked);
@@ -338,33 +376,40 @@ mod tests {
 
     #[test]
     fn invalid_dates_are_ignored() {
-        let parsed = parse_task_line("- [ ] task 📅 notadate").unwrap();
+        let parsed = parse_task_line("- [ ] #task item 📅 notadate").unwrap();
         assert_eq!(parsed.due, None);
     }
 
     #[test]
     fn set_checked_stamps_and_removes_completion_date() {
         let today = date("2026-09-04");
-        let line = "- [ ] Pay rent 📅 2026-06-01";
+        let line = "- [ ] #task Pay rent 📅 2026-06-01";
         let done = set_checked(line, true, today).unwrap();
-        assert_eq!(done, format!("- [x] Pay rent 📅 2026-06-01 ✅ {today}"));
+        assert_eq!(done, format!("- [x] #task Pay rent 📅 2026-06-01 ✅ {today}"));
         let reopened = set_checked(&done, false, today).unwrap();
-        assert_eq!(reopened, "- [ ] Pay rent 📅 2026-06-01");
+        assert_eq!(reopened, "- [ ] #task Pay rent 📅 2026-06-01");
     }
 
     #[test]
     fn set_checked_replaces_existing_completion_date() {
         let today = date("2026-09-04");
-        let line = "- [x] Done ✅ 2026-01-01";
+        let line = "- [x] #task Done ✅ 2026-01-01";
         let updated = set_checked(line, true, today).unwrap();
-        assert_eq!(updated, format!("- [x] Done ✅ {today}"));
+        assert_eq!(updated, format!("- [x] #task Done ✅ {today}"));
     }
 
     #[test]
     fn set_checked_preserves_indent_and_marker() {
         let today = date("2026-09-04");
-        let updated = set_checked("  * [ ] indented task", true, today).unwrap();
-        assert_eq!(updated, format!("  * [x] indented task ✅ {today}"));
+        let updated = set_checked("  * [ ] #task indented task", true, today).unwrap();
+        assert_eq!(updated, format!("  * [x] #task indented task ✅ {today}"));
+    }
+
+    #[test]
+    fn set_checked_toggles_plain_checklists_without_task_metadata() {
+        let today = date("2026-09-04");
+        assert_eq!(set_checked("- [ ] Pack a charger", true, today).as_deref(), Some("- [x] Pack a charger"));
+        assert_eq!(set_checked("- [x] Reviewed ✅ 2025-01-01", false, today).as_deref(), Some("- [ ] Reviewed ✅ 2025-01-01"));
     }
 
     #[test]
@@ -375,8 +420,8 @@ mod tests {
 
     #[test]
     fn strip_metadata_removes_tokens_and_keeps_words() {
-        assert_eq!(strip_metadata("Pay rent +home 📅 2026-06-01 ⏫"), "Pay rent +home");
-        assert_eq!(strip_metadata("Submitted ✅ 2026-05-30 🔽"), "Submitted");
+        assert_eq!(strip_metadata("#task Pay rent +home 📅 2026-06-01 ⏫"), "Pay rent +home");
+        assert_eq!(strip_metadata("Submitted #TASK ✅ 2026-05-30 🔽"), "Submitted");
         assert_eq!(strip_metadata("  spaced   words 🛫 2026-01-01  "), "spaced words");
         assert_eq!(strip_metadata("📅 notadate keeps"), "notadate keeps");
         assert_eq!(strip_metadata("⏫"), "");
@@ -385,7 +430,7 @@ mod tests {
     #[test]
     fn due_state_classifies_against_today() {
         let today = date("2026-09-05");
-        let mut task = collect_tasks("- [ ] a 📅 2026-09-01\n", NoteId::new(1), "a.md", "A").remove(0);
+        let mut task = collect_tasks("- [ ] #task a 📅 2026-09-01\n", NoteId::new(1), "a.md", "A").remove(0);
         assert_eq!(task.due_state(today), DueState::Overdue);
         task.due = Some(today);
         assert_eq!(task.due_state(today), DueState::Today);
@@ -400,26 +445,28 @@ mod tests {
 
     #[test]
     fn collect_tasks_stores_display_text() {
-        let tasks = collect_tasks("- [ ] Pay rent 📅 2026-06-01 ⏫\n", NoteId::new(1), "a.md", "A");
+        let tasks = collect_tasks("- [ ] #task Pay rent 📅 2026-06-01 ⏫\n- [ ] Shopping list\n", NoteId::new(1), "a.md", "A");
+        assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].text, "Pay rent");
         assert_eq!(tasks[0].due, Some(date("2026-06-01")));
     }
 
     #[test]
     fn locate_task_line_finds_matching_line_and_preserves_endings() {
-        let body = "intro\r\n- [ ] alpha 📅 2026-06-01\r\n- [x] beta\r\n";
+        let body = "intro\r\n- [ ] #task alpha 📅 2026-06-01\r\n- [x] #task beta\r\n";
         let range = locate_task_line(body, 1, "alpha").unwrap();
-        assert_eq!(&body[range.clone()], "- [ ] alpha 📅 2026-06-01");
+        assert_eq!(&body[range.clone()], "- [ ] #task alpha 📅 2026-06-01");
         let mut rewritten = body.to_string();
-        rewritten.replace_range(range, "- [x] alpha 📅 2026-06-01 ✅ 2026-09-05");
-        assert_eq!(rewritten, "intro\r\n- [x] alpha 📅 2026-06-01 ✅ 2026-09-05\r\n- [x] beta\r\n");
-        let last = locate_task_line("- [ ] only", 0, "only").unwrap();
-        assert_eq!(last, 0..10);
+        rewritten.replace_range(range, "- [x] #task alpha 📅 2026-06-01 ✅ 2026-09-05");
+        assert_eq!(rewritten, "intro\r\n- [x] #task alpha 📅 2026-06-01 ✅ 2026-09-05\r\n- [x] #task beta\r\n");
+        let line = "- [ ] #task only";
+        let last = locate_task_line(line, 0, "only").unwrap();
+        assert_eq!(last, 0..line.len());
     }
 
     #[test]
     fn locate_task_line_rejects_stale_positions() {
-        let body = "- [ ] alpha\n- [ ] beta\n";
+        let body = "- [ ] #task alpha\n- [ ] #task beta\n";
         assert!(locate_task_line(body, 0, "beta").is_none());
         assert!(locate_task_line(body, 5, "alpha").is_none());
         assert!(locate_task_line("plain\n", 0, "plain").is_none());
@@ -427,11 +474,11 @@ mod tests {
 
     #[test]
     fn collect_tasks_skips_code_fences() {
-        let body = "- [ ] real task\n```md\n- [ ] in fence\n```\n~~~\n- [ ] in tilde fence\n~~~\n- [ ] another real\n";
+        let body = "- [ ] #task real task\n- [ ] regular checklist\n```md\n- [ ] #task in fence\n```\n~~~\n- [ ] #task in tilde fence\n~~~\n- [ ] #task another real\n";
         let tasks = collect_tasks(body, NoteId::new(1), "notes.md", "Notes");
         assert_eq!(tasks.len(), 2);
         assert_eq!(tasks[0].source_line, 0);
-        assert_eq!(tasks[1].source_line, 7);
+        assert_eq!(tasks[1].source_line, 8);
     }
 
     #[test]

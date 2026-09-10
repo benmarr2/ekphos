@@ -117,8 +117,8 @@ fn parse_document(document: &DocumentSnapshot, frontmatter: Option<&CompactFront
             line_index += 1;
             continue;
         }
-        if let Some(task) = ekphos_tasks::parse_task_line(line) {
-            parsed.push_item(ContentItem::TaskItem { text: range_for_slice(document, line_index, task.body), checked: task.checked, source_line: line_index as u32, indent: task.indent }, document, wiki_exists);
+        if let Some(task) = ekphos_tasks::parse_checkbox_line(line) {
+            parsed.push_item(ContentItem::TaskItem { text: range_for_slice(document, line_index, task.body), checked: task.checked, source_line: line_index as u32, indent: task.indent, managed: task.managed }, document, wiki_exists);
             line_index += 1;
             continue;
         }

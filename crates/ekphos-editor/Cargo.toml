@@ -10,6 +10,7 @@ description = "Text editor engine and widget for Ekphos"
 
 [dependencies]
 ekphos-core.workspace = true
+ekphos-tasks.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
 serde.workspace = true

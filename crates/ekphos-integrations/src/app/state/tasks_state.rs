@@ -487,7 +487,7 @@ impl App {
         let today = self.today();
         if self.document.active_note_id == Some(task.note_id) {
             let matching = self.document.content_items.iter().position(|item| match item {
-                ContentItem::TaskItem { source_line, checked, .. } => *source_line as usize == task.source_line && *checked == task.checked,
+                ContentItem::TaskItem { source_line, checked, managed, .. } => *managed && *source_line as usize == task.source_line && *checked == task.checked,
                 _ => false,
             });
             match matching {
