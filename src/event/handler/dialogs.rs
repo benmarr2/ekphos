@@ -555,29 +555,34 @@ pub(super) fn handle_rename_folder_dialog(app: &mut App, key: crossterm::event::
 }
 
 pub(super) fn handle_help_dialog(app: &mut App, key: crossterm::event::KeyEvent) {
-    const MAX_HELP_LINES: usize = 90;
     match key.code {
         KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') | KeyCode::Char('?') => {
             app.state.help_scroll = 0;
             app.state.dialog = DialogState::None;
         }
         KeyCode::Char('j') | KeyCode::Down => {
-            app.state.help_scroll = app.state.help_scroll.saturating_add(1).min(MAX_HELP_LINES);
+            app.state.help_scroll = app.state.help_scroll.saturating_add(1);
         }
         KeyCode::Char('k') | KeyCode::Up => {
             app.state.help_scroll = app.state.help_scroll.saturating_sub(1);
         }
         KeyCode::Char('d') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-            app.state.help_scroll = app.state.help_scroll.saturating_add(10).min(MAX_HELP_LINES);
+            app.state.help_scroll = app.state.help_scroll.saturating_add(10);
+        }
+        KeyCode::PageDown => {
+            app.state.help_scroll = app.state.help_scroll.saturating_add(10);
         }
         KeyCode::Char('u') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
             app.state.help_scroll = app.state.help_scroll.saturating_sub(10);
         }
-        KeyCode::Char('g') => {
+        KeyCode::PageUp => {
+            app.state.help_scroll = app.state.help_scroll.saturating_sub(10);
+        }
+        KeyCode::Char('g') | KeyCode::Home => {
             app.state.help_scroll = 0;
         }
-        KeyCode::Char('G') => {
-            app.state.help_scroll = MAX_HELP_LINES;
+        KeyCode::Char('G') | KeyCode::End => {
+            app.state.help_scroll = usize::MAX;
         }
         _ => {}
     }

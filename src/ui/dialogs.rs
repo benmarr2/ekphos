@@ -12,6 +12,81 @@ use crate::keybindings::{AppCommand, KeybindingFallback};
 
 const TITLE_MAIN: &[&str] = &["████████ ██   ██ ██████  ██   ██  ██████  ███████", "██       ██  ██  ██   ██ ██   ██ ██    ██ ██     ", "█████    █████   ██████  ███████ ██    ██ ███████", "██       ██  ██  ██      ██   ██ ██    ██      ██", "████████ ██   ██ ██      ██   ██  ██████  ███████"];
 
+struct HelpEntry {
+    commands: &'static [AppCommand],
+    description: &'static str,
+}
+
+struct HelpSection {
+    title: &'static str,
+    entries: &'static [HelpEntry],
+}
+
+const HELP_SECTIONS: &[HelpSection] = &[
+    HelpSection {
+        title: "Global",
+        entries: &[
+            HelpEntry { commands: &[AppCommand::ShowHelp], description: "Show help" },
+            HelpEntry { commands: &[AppCommand::Quit], description: "Quit" },
+            HelpEntry { commands: &[AppCommand::FocusNext], description: "Focus next panel" },
+            HelpEntry { commands: &[AppCommand::FocusPrevious], description: "Focus previous panel" },
+            HelpEntry { commands: &[AppCommand::ToggleSidebar], description: "Toggle sidebar" },
+            HelpEntry { commands: &[AppCommand::ToggleOutline], description: "Toggle outline" },
+            HelpEntry { commands: &[AppCommand::ShrinkPanel, AppCommand::GrowPanel], description: "Shrink / grow panel" },
+            HelpEntry { commands: &[AppCommand::OpenQuickSearch], description: "Search notes" },
+            HelpEntry { commands: &[AppCommand::FindInBuffer], description: "Find in note" },
+            HelpEntry { commands: &[AppCommand::OpenThemeSelector], description: "Select theme and style" },
+            HelpEntry { commands: &[AppCommand::OpenGraph], description: "Open graph view" },
+            HelpEntry { commands: &[AppCommand::OpenTaskView], description: "Open task view" },
+            HelpEntry { commands: &[AppCommand::OpenJournal], description: "Open today's journal" },
+            HelpEntry { commands: &[AppCommand::HistoryBack, AppCommand::HistoryForward], description: "Go back / forward" },
+            HelpEntry { commands: &[AppCommand::ToggleZen], description: "Toggle zen mode" },
+            HelpEntry { commands: &[AppCommand::ReloadFiles], description: "Reload files from disk" },
+            HelpEntry { commands: &[AppCommand::ReloadConfig], description: "Reload config and theme" },
+        ],
+    },
+    HelpSection {
+        title: "Navigation",
+        entries: &[
+            HelpEntry { commands: &[AppCommand::MoveDown, AppCommand::MoveUp], description: "Move down / up" },
+            HelpEntry { commands: &[AppCommand::GoFirst, AppCommand::GoLast], description: "Go to first / last" },
+            HelpEntry { commands: &[AppCommand::Activate], description: "Activate selected item" },
+            HelpEntry { commands: &[AppCommand::OpenSelected], description: "Open selected target" },
+        ],
+    },
+    HelpSection {
+        title: "Sidebar",
+        entries: &[
+            HelpEntry { commands: &[AppCommand::CreateNote], description: "Create note" },
+            HelpEntry { commands: &[AppCommand::CreateFolder], description: "Create folder" },
+            HelpEntry { commands: &[AppCommand::EditNote], description: "Edit note" },
+            HelpEntry { commands: &[AppCommand::RenameItem], description: "Rename item" },
+            HelpEntry { commands: &[AppCommand::DeleteItem], description: "Delete item" },
+            HelpEntry { commands: &[AppCommand::CutItem], description: "Cut item" },
+            HelpEntry { commands: &[AppCommand::PasteItem], description: "Paste item" },
+            HelpEntry { commands: &[AppCommand::CancelCut], description: "Cancel cut" },
+            HelpEntry { commands: &[AppCommand::SidebarSearch], description: "Search sidebar" },
+            HelpEntry { commands: &[AppCommand::CycleSort], description: "Change sort order" },
+        ],
+    },
+    HelpSection {
+        title: "Content view",
+        entries: &[
+            HelpEntry { commands: &[AppCommand::ContentAction], description: "Toggle task / open target" },
+            HelpEntry { commands: &[AppCommand::NextTarget, AppCommand::PreviousTarget], description: "Next / previous target" },
+            HelpEntry { commands: &[AppCommand::ToggleFloatingCursor], description: "Toggle floating cursor" },
+            HelpEntry { commands: &[AppCommand::HalfPageDown, AppCommand::HalfPageUp], description: "Half-page down / up" },
+            HelpEntry { commands: &[AppCommand::ToggleFrontmatter], description: "Toggle frontmatter" },
+            HelpEntry { commands: &[AppCommand::ToggleFold], description: "Toggle heading fold" },
+            HelpEntry { commands: &[AppCommand::FoldAll, AppCommand::UnfoldAll], description: "Fold / unfold all headings" },
+        ],
+    },
+    HelpSection {
+        title: "Editor",
+        entries: &[HelpEntry { commands: &[AppCommand::ToggleEditorMode], description: "Switch editing mode" }, HelpEntry { commands: &[AppCommand::InsertTask], description: "Insert task item" }, HelpEntry { commands: &[AppCommand::ToggleEditorFold], description: "Toggle heading fold" }],
+    },
+];
+
 pub fn render_keybinding_warning(f: &mut Frame, app: &App) {
     let Some(warning) = &app.state.keybinding_warning else { return };
     let area = f.area();
@@ -353,7 +428,7 @@ pub fn render_help_dialog(f: &mut Frame, app: &App) -> usize {
     let dialog_height = area.height.saturating_sub(4).min(50);
     let dialog_area = Rect { x: (area.width.saturating_sub(dialog_width)) / 2, y: (area.height.saturating_sub(dialog_height)) / 2, width: dialog_width, height: dialog_height };
     f.render_widget(Clear, dialog_area);
-    let block = Block::default().title(" Help - Keybindings (j/k to scroll) ").borders(Borders::ALL).border_style(Style::default().fg(dialog_theme.border)).style(Style::default().bg(dialog_theme.background));
+    let block = Block::default().title(" Help - All keybindings (j/k or arrows to scroll) ").borders(Borders::ALL).border_style(Style::default().fg(dialog_theme.border)).style(Style::default().bg(dialog_theme.background));
     let inner_area = block.inner(dialog_area);
     f.render_widget(block, dialog_area);
     let columns = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(50), Constraint::Percentage(50)]).split(inner_area);
@@ -362,54 +437,22 @@ pub fn render_help_dialog(f: &mut Frame, app: &App) -> usize {
     let header_style = Style::default().fg(dialog_theme.title).add_modifier(Modifier::BOLD);
     let subheader_style = Style::default().fg(theme.info).add_modifier(Modifier::BOLD);
     let keys = |command| format!(" {:<16}", app.state.keymap.binding_label(command));
-    let paired_keys = |first, second| format!(" {:<16}", format!("{} / {}", app.state.keymap.binding_label(first), app.state.keymap.binding_label(second)),);
-    let left_content = vec![
-        Line::from(""),
-        Line::from(Span::styled(" Global", header_style)),
-        Line::from(vec![Span::styled(paired_keys(AppCommand::MoveDown, AppCommand::MoveUp), key_style), Span::styled("Navigate up/down", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::FocusNext), key_style), Span::styled("Switch focus", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::FocusPrevious), key_style), Span::styled("Switch focus (reverse)", desc_style)]),
-        Line::from(vec![Span::styled(paired_keys(AppCommand::Activate, AppCommand::OpenSelected), key_style), Span::styled("Open / Jump to heading", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::ShowHelp), key_style), Span::styled("Show this help", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::Quit), key_style), Span::styled("Quit", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::ToggleSidebar), key_style), Span::styled("Toggle sidebar", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::ToggleOutline), key_style), Span::styled("Toggle outline", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::ShrinkPanel), key_style), Span::styled("Shrink focused side panel", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::GrowPanel), key_style), Span::styled("Grow focused side panel", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::FindInBuffer), key_style), Span::styled("Find in buffer", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::OpenQuickSearch), key_style), Span::styled("Fuzzy search notes", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::OpenThemeSelector), key_style), Span::styled("Select theme and style", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::OpenGraph), key_style), Span::styled("Open graph view", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::OpenTaskView), key_style), Span::styled("Open task view", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::OpenJournal), key_style), Span::styled("Open today's journal", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::ToggleZen), key_style), Span::styled("Toggle zen mode", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::ToggleFrontmatter), key_style), Span::styled("Toggle frontmatter", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::ReloadFiles), key_style), Span::styled("Reload files from disk", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::ReloadConfig), key_style), Span::styled("Reload config/theme", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::ToggleEditorMode), key_style), Span::styled("Switch editing mode", desc_style)]),
-        Line::from(""),
-        Line::from(Span::styled(" Sidebar", header_style)),
-        Line::from(vec![Span::styled(keys(AppCommand::CreateNote), key_style), Span::styled("Create new note", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::CreateFolder), key_style), Span::styled("Create new folder", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::Activate), key_style), Span::styled("Toggle folder / Open", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::RenameItem), key_style), Span::styled("Rename", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::DeleteItem), key_style), Span::styled("Delete", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::EditNote), key_style), Span::styled("Edit note", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::SidebarSearch), key_style), Span::styled("Search notes", desc_style)]),
-        Line::from(""),
-        Line::from(Span::styled(" Content View", header_style)),
-        Line::from(vec![Span::styled(paired_keys(AppCommand::MoveDown, AppCommand::MoveUp), key_style), Span::styled("Navigate lines", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::ToggleFloatingCursor), key_style), Span::styled("Toggle floating cursor", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::GoFirst), key_style), Span::styled("Go to beginning", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::GoLast), key_style), Span::styled("Go to end", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::ContentAction), key_style), Span::styled("Toggle task/Open link", desc_style)]),
-        Line::from(vec![Span::styled(paired_keys(AppCommand::NextTarget, AppCommand::PreviousTarget), key_style), Span::styled("Next/Previous link", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::ToggleFold), key_style), Span::styled("Toggle heading fold", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::FoldAll), key_style), Span::styled("Fold all headings", desc_style)]),
-        Line::from(vec![Span::styled(keys(AppCommand::UnfoldAll), key_style), Span::styled("Unfold all headings", desc_style)]),
-        Line::from(""),
-        Line::from(Span::styled(" Press Esc or ? to close", Style::default().fg(theme.muted).add_modifier(Modifier::ITALIC))),
-    ];
+    let mut left_content = vec![Line::from("")];
+    for section in HELP_SECTIONS {
+        left_content.push(Line::from(Span::styled(format!(" {}", section.title), header_style)));
+        for entry in section.entries {
+            let binding = entry.commands.iter().map(|command| app.state.keymap.binding_label(*command)).collect::<Vec<_>>().join(" / ");
+            left_content.push(Line::from(vec![Span::styled(format!(" {binding:<16} "), key_style), Span::styled(entry.description, desc_style)]));
+        }
+        left_content.push(Line::from(""));
+    }
+    left_content.extend([
+        Line::from(Span::styled(" Help dialog", header_style)),
+        Line::from(vec![Span::styled(format!(" {:<21} ", "j/k or ↑/↓"), key_style), Span::styled("Scroll one line", desc_style)]),
+        Line::from(vec![Span::styled(format!(" {:<21} ", "Ctrl+d/u or PgDn/PgUp"), key_style), Span::styled("Scroll one page", desc_style)]),
+        Line::from(vec![Span::styled(format!(" {:<21} ", "g/G or Home/End"), key_style), Span::styled("Go to first / last", desc_style)]),
+        Line::from(vec![Span::styled(format!(" {:<21} ", "Esc/Enter/q/?"), key_style), Span::styled("Close help", desc_style)]),
+    ]);
     let right_content = if app.state.config.editor.mode == EditingMode::Standard {
         vec![
             Line::from(""),
@@ -577,4 +620,18 @@ pub fn render_directory_not_found_dialog(f: &mut Frame, app: &App) {
     ];
     let dialog = Paragraph::new(content).block(Block::default().title(" Error ").borders(Borders::ALL).border_style(Style::default().fg(theme.error)).style(Style::default().bg(theme.background))).alignment(Alignment::Center);
     f.render_widget(dialog, dialog_area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn help_dialog_lists_every_app_command_once() {
+        let mut listed = HELP_SECTIONS.iter().flat_map(|section| section.entries).flat_map(|entry| entry.commands.iter().copied()).collect::<Vec<_>>();
+        let mut expected = AppCommand::ALL.to_vec();
+        listed.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(listed, expected, "help sections must contain every registered app command exactly once");
+    }
 }
