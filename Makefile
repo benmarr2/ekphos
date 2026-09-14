@@ -22,7 +22,7 @@ ifeq ($(UNAME_S),Linux)
     PLATFORM := linux
 endif
 
-.PHONY: all build release debug clean install uninstall help test check fmt lint run package smoke verify print-version
+.PHONY: all build release debug clean install uninstall help test check fmt fmt-check lint run run-release package smoke verify print-version dist deb rpm install-user uninstall-user
 
 # Default target
 all: release
@@ -68,7 +68,7 @@ fmt-check:
 
 # Lint with clippy
 lint:
-	scripts/clippy-ratchet.sh
+	cargo clippy --workspace --all-targets --locked -- -D warnings
 
 # Package every workspace crate in publish order and smoke-test installation.
 package:

@@ -360,6 +360,19 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
+    fn draw_changelog(fixture: &mut GoldenApp, version: &str, width: u16, height: u16) -> ratatui::buffer::Buffer {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let action = super::dialogs::render_changelog_dialog_for_version(frame, &fixture.app, version);
+                fixture.app.state.changelog_scroll = action.scroll;
+                fixture.app.state.changelog_links = action.links;
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
     fn row_text(buffer: &ratatui::buffer::Buffer, y: u16) -> String {
         (0..buffer.area.width).map(|x| buffer[(x, y)].symbol().to_string()).collect()
     }
@@ -639,7 +652,7 @@ mod tests {
     fn changelog_modal_renders_announcement_before_summary() {
         let mut fixture = GoldenApp::new();
         fixture.app.open_changelog();
-        let buffer = draw(&mut fixture, 80, 24);
+        let buffer = draw_changelog(&mut fixture, "0.50.0", 80, 24);
         let content = (0..24).map(|y| row_text(&buffer, y)).collect::<String>();
         assert!(content.contains("What's new in Ekphos"), "{content}");
         let announcement = content.find("Announcement").expect("announcement heading");

@@ -32,7 +32,7 @@ WORKDIR /app
 COPY --from=builder /usr/src/ekphos/target/release/ekphos /app/ekphos
 
 # Copy bundled themes (so the image still has shipped themes available)
-COPY --from=builder /usr/src/ekphos/themes /app/themes
+COPY --from=builder /usr/src/ekphos/crates/ekphos-integrations/themes /app/themes
 
 # Add a small startup script that will (if provided) install
 # `/config/authorized_keys` into the ekphos user's .ssh/authorized_keys

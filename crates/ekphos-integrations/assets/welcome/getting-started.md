@@ -39,6 +39,7 @@ section of `~/.config/ekphos/config.toml`.
 - `/`: Search notes
 - `?`: Show help dialog
 - `Ctrl+g`: Open the active note's Local graph
+- `Ctrl+y`: Open the task view (all tasks across the vault)
 - `Ctrl+z`: Toggle zen mode
 - `Ctrl+m`: Toggle frontmatter
 - `F6`: Switch between Standard and Vim editing

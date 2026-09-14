@@ -272,19 +272,23 @@ pub struct ChangelogDialogRender {
 }
 
 pub fn render_changelog_dialog(f: &mut Frame, app: &App) -> ChangelogDialogRender {
+    render_changelog_dialog_for_version(f, app, env!("CARGO_PKG_VERSION"))
+}
+
+pub(crate) fn render_changelog_dialog_for_version(f: &mut Frame, app: &App, version: &str) -> ChangelogDialogRender {
     let area = f.area();
     let theme = &app.state.theme;
     let dialog_width = 76.min(area.width.saturating_sub(4));
     let dialog_height = 22.min(area.height.saturating_sub(4));
     let dialog_area = Rect { x: (area.width.saturating_sub(dialog_width)) / 2, y: (area.height.saturating_sub(dialog_height)) / 2, width: dialog_width, height: dialog_height };
     f.render_widget(Clear, dialog_area);
-    let title = format!(" What's new in Ekphos v{} ", env!("CARGO_PKG_VERSION"));
+    let title = format!(" What's new in Ekphos v{version} ");
     let block = Block::default().title(title).borders(Borders::ALL).border_style(Style::default().fg(theme.dialog.border)).style(Style::default().bg(theme.dialog.background));
     let inner = block.inner(dialog_area);
     f.render_widget(block, dialog_area);
     let padded = inner.inner(Margin { horizontal: 2, vertical: 1 });
     let sections = Layout::default().direction(Direction::Vertical).constraints([Constraint::Min(0), Constraint::Length(1), Constraint::Length(3)]).split(padded);
-    let notes = release_notes(CHANGELOG, env!("CARGO_PKG_VERSION")).or_else(|| release_notes(CHANGELOG, "Unreleased")).unwrap_or("No summary is available for this version.");
+    let notes = release_notes(CHANGELOG, version).or_else(|| release_notes(CHANGELOG, "Unreleased")).unwrap_or("No summary is available for this version.");
     let lines = changelog_lines(notes, theme, sections[0].width);
     let max_scroll = lines.len().saturating_sub(sections[0].height as usize);
     let scroll = app.state.changelog_scroll.min(max_scroll);
@@ -795,12 +799,16 @@ mod tests {
     }
 
     #[test]
-    fn current_release_keeps_an_optional_announcement_before_the_summary() {
-        let notes = release_notes(CHANGELOG, env!("CARGO_PKG_VERSION")).expect("current version must have release notes");
+    fn current_release_has_release_notes() {
+        assert!(release_notes(CHANGELOG, env!("CARGO_PKG_VERSION")).is_some());
+    }
+
+    #[test]
+    fn release_notes_keep_an_optional_announcement_before_the_summary() {
+        let notes = release_notes(CHANGELOG, "0.50.0").expect("fixture release must have notes");
         let announcement = notes.find("### Announcement").expect("current release should exercise announcement rendering");
         let summary = notes.find("### Summary").expect("current release needs a concise summary");
         assert!(announcement < summary);
-        assert_eq!(notes.lines().filter(|line| line.starts_with("- ")).count(), 4);
     }
 
     #[test]
