@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn zoom_graph(app: &mut App, factor: f32) {
     let old_zoom = app.graph.graph_view.zoom;
     let min_zoom = graph_fit_zoom(app);
-    let new_zoom = (old_zoom * factor).clamp(min_zoom, ekphos_graph::GRAPH_MAX_ZOOM);
+    let new_zoom = (old_zoom * factor).clamp(min_zoom, crate::graph::GRAPH_MAX_ZOOM);
     if new_zoom <= min_zoom * 1.0001 {
         app.graph.graph_view.zoom = min_zoom;
         center_graph_bounds(app);
@@ -45,11 +45,11 @@ pub(super) fn graph_bounds(app: &App) -> Option<(f32, f32, f32, f32)> {
 
 pub(super) fn graph_fit_zoom(app: &App) -> f32 {
     let Some((min_x, min_y, max_x, max_y)) = graph_bounds(app) else {
-        return ekphos_graph::fit_zoom_for_bounds(1.0, 1.0, app.graph.graph_view.view_width, app.graph.graph_view.view_height);
+        return crate::graph::fit_zoom_for_bounds(1.0, 1.0, app.graph.graph_view.view_width, app.graph.graph_view.view_height);
     };
     let graph_width = (max_x - min_x).max(3.0);
     let graph_height = (max_y - min_y).max(2.0);
-    ekphos_graph::fit_zoom_for_bounds(graph_width, graph_height, app.graph.graph_view.view_width, app.graph.graph_view.view_height)
+    crate::graph::fit_zoom_for_bounds(graph_width, graph_height, app.graph.graph_view.view_width, app.graph.graph_view.view_height)
 }
 
 pub(super) fn center_graph_bounds(app: &mut App) {
@@ -187,7 +187,7 @@ pub(super) fn handle_graph_view_dialog(app: &mut App, key: crossterm::event::Key
         }
         KeyCode::Char('0') => {
             let fit_zoom = graph_fit_zoom(app);
-            app.graph.graph_view.zoom = 1.0f32.clamp(fit_zoom, ekphos_graph::GRAPH_MAX_ZOOM);
+            app.graph.graph_view.zoom = 1.0f32.clamp(fit_zoom, crate::graph::GRAPH_MAX_ZOOM);
             if app.graph.graph_view.zoom <= fit_zoom * 1.0001 {
                 center_graph_bounds(app);
             } else {
@@ -258,7 +258,7 @@ pub(super) fn select_graph_node(app: &mut App, idx: usize, center: bool) {
 }
 
 pub(super) fn cycle_graph_match(app: &mut App, delta: isize) {
-    let skip_context_root = app.graph.graph_view.mode == ekphos_graph::GraphMode::Local && !app.graph.graph_view.filter_query.trim().is_empty();
+    let skip_context_root = app.graph.graph_view.mode == crate::graph::GraphMode::Local && !app.graph.graph_view.filter_query.trim().is_empty();
     let candidates: Vec<_> = app.graph.graph_view.nodes.iter().enumerate().filter_map(|(idx, node)| (!skip_context_root || node.depth != 0).then_some(idx)).collect();
     if candidates.is_empty() {
         return;

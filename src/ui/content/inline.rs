@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) use ekphos_integrations::text::calc_formatting_shrinkage;
+pub(super) use crate::text::calc_formatting_shrinkage;
 
 pub(super) const INLINE_MATH_MARKER: char = '\u{2063}';
 
@@ -41,7 +41,7 @@ where
             }
         }
         if c == '$' {
-            if let Some(math) = ekphos_core::markdown::inline_math_at(text, i) {
+            if let Some(math) = crate::core::markdown::inline_math_at(text, i) {
                 if i > current_start {
                     spans.push(Span::styled(&text[current_start..i], Style::default().fg(content_theme.text)));
                 }
@@ -241,7 +241,7 @@ where
             }
         }
         if c == '[' {
-            if let Some(link) = ekphos_core::markdown::wiki_link_at(text, i) {
+            if let Some(link) = crate::core::markdown::wiki_link_at(text, i) {
                 if i > current_start {
                     spans.push(Span::styled(&text[current_start..i], Style::default().fg(content_theme.text)));
                 }
@@ -262,8 +262,8 @@ where
                 current_start = link.range.end;
                 continue;
             }
-            if let Some(link) = ekphos_core::markdown::markdown_link_at(text, i) {
-                if link.kind == ekphos_core::markdown::MarkdownLinkKind::Link {
+            if let Some(link) = crate::core::markdown::markdown_link_at(text, i) {
+                if link.kind == crate::core::markdown::MarkdownLinkKind::Link {
                     if i > current_start {
                         spans.push(Span::styled(&text[current_start..i], Style::default().fg(content_theme.text)));
                     }
@@ -320,7 +320,7 @@ pub(super) fn inline_math_layout_source(text: &str, states: &[InlineMathRenderSt
     }
     let mut result = String::with_capacity(text.len());
     let mut previous_end = 0;
-    for (index, expression) in ekphos_core::markdown::inline_math(text).into_iter().enumerate() {
+    for (index, expression) in crate::core::markdown::inline_math(text).into_iter().enumerate() {
         result.push_str(&text[previous_end..expression.range.start]);
         if let Some(InlineMathRenderState::Ready { width, .. }) = states.get(index) {
             result.push_str(&"□".repeat(usize::from((*width).max(1))));

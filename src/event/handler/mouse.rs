@@ -94,7 +94,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEv
         if !in_content_area && app.canvas_editor_active() && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) && !app.canvas_commit_node_edit() {
             return;
         }
-        if !in_content_area && app.active_document_kind() == Some(ekphos_vault::VaultFileKind::Canvas) && matches!(mouse.kind, MouseEventKind::Moved) {
+        if !in_content_area && app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) && matches!(mouse.kind, MouseEventKind::Moved) {
             app.structured.canvas.hovered_node = None;
             app.structured.canvas.hovered_edge = None;
             app.structured.canvas.hovered_resize = None;
@@ -191,7 +191,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEv
 
 fn handle_structured_document_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) -> bool {
     match app.active_document_kind() {
-        Some(ekphos_vault::VaultFileKind::Base) => match mouse.kind {
+        Some(crate::vault::VaultFileKind::Base) => match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
                 if app.structured.base.column_left_rect.is_some_and(|rect| rect.contains(pointer)) {
@@ -216,7 +216,7 @@ fn handle_structured_document_mouse(app: &mut App, mouse: crossterm::event::Mous
             }
             _ => false,
         },
-        Some(ekphos_vault::VaultFileKind::Canvas) => match mouse.kind {
+        Some(crate::vault::VaultFileKind::Canvas) => match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
                 if matches!(app.structured.canvas.interaction, crate::app::CanvasInteraction::Connecting { .. }) {
@@ -301,18 +301,18 @@ fn handle_structured_document_mouse(app: &mut App, mouse: crossterm::event::Mous
             }
             _ => false,
         },
-        Some(ekphos_vault::VaultFileKind::Markdown) | None => false,
+        Some(crate::vault::VaultFileKind::Markdown) | None => false,
     }
 }
 
-fn canvas_side_at(rect: ratatui::layout::Rect, pointer: ratatui::layout::Position) -> ekphos_canvas::CanvasSide {
+fn canvas_side_at(rect: ratatui::layout::Rect, pointer: ratatui::layout::Position) -> crate::canvas::CanvasSide {
     let distances = [
-        (pointer.y.saturating_sub(rect.y), ekphos_canvas::CanvasSide::Top),
-        (rect.right().saturating_sub(1).saturating_sub(pointer.x), ekphos_canvas::CanvasSide::Right),
-        (rect.bottom().saturating_sub(1).saturating_sub(pointer.y), ekphos_canvas::CanvasSide::Bottom),
-        (pointer.x.saturating_sub(rect.x), ekphos_canvas::CanvasSide::Left),
+        (pointer.y.saturating_sub(rect.y), crate::canvas::CanvasSide::Top),
+        (rect.right().saturating_sub(1).saturating_sub(pointer.x), crate::canvas::CanvasSide::Right),
+        (rect.bottom().saturating_sub(1).saturating_sub(pointer.y), crate::canvas::CanvasSide::Bottom),
+        (pointer.x.saturating_sub(rect.x), crate::canvas::CanvasSide::Left),
     ];
-    distances.into_iter().min_by_key(|(distance, _)| *distance).map(|(_, side)| side).unwrap_or(ekphos_canvas::CanvasSide::Right)
+    distances.into_iter().min_by_key(|(distance, _)| *distance).map(|(_, side)| side).unwrap_or(crate::canvas::CanvasSide::Right)
 }
 
 pub(super) fn handle_paste_event(app: &mut App, text: String) {

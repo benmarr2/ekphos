@@ -243,7 +243,7 @@ pub(crate) fn content_item_click_col(app: &App, index: usize, item_area: Rect, m
 }
 
 fn inline_math_states_for_click(app: &App, item_index: usize, source: &str) -> Vec<InlineMathRenderState> {
-    ekphos_core::markdown::inline_math(source)
+    crate::core::markdown::inline_math(source)
         .into_iter()
         .enumerate()
         .map(|(expression_index, _)| {
@@ -254,7 +254,7 @@ fn inline_math_states_for_click(app: &App, item_index: usize, source: &str) -> V
 }
 
 fn inline_math_column_adjustments(spans: &[Span<'_>], source: &str, states: &[InlineMathRenderState]) -> Vec<(usize, usize, usize)> {
-    let expressions = ekphos_core::markdown::inline_math(source);
+    let expressions = crate::core::markdown::inline_math(source);
     let mut ready_expressions = expressions.iter().zip(states).filter_map(|(expression, state)| matches!(state, InlineMathRenderState::Ready { .. }).then_some(expression));
     let mut column = 0usize;
     let mut adjustments = Vec::new();

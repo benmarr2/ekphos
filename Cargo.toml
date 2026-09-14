@@ -1,51 +1,17 @@
 [package]
 name = "ekphos"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-authors.workspace = true
-description = "A lightweight, fast, terminal-based markdown research tool inspired by Obsidian"
-license.workspace = true
-repository.workspace = true
-keywords = ["markdown", "tui", "terminal", "notes", "obsidian"]
-categories = ["command-line-utilities", "text-editors"]
-readme = "README.md"
-
-[workspace]
-members = [
-    ".",
-    "crates/ekphos-bases",
-    "crates/ekphos-canvas",
-    "crates/ekphos-core",
-    "crates/ekphos-editor",
-    "crates/ekphos-graph",
-    "crates/ekphos-integrations",
-    "crates/ekphos-search",
-    "crates/ekphos-tasks",
-    "crates/ekphos-vault",
-    "crates/ekphos-vim",
-]
-resolver = "2"
-
-[workspace.package]
 version = "0.25.10"
 edition = "2021"
 rust-version = "1.90"
 authors = ["Ekphos Contributors"]
+description = "A lightweight, fast, terminal-based markdown research tool inspired by Obsidian"
 license = "MIT"
 repository = "https://github.com/nostacks/ekphos"
+keywords = ["markdown", "tui", "terminal", "notes", "obsidian"]
+categories = ["command-line-utilities", "text-editors"]
+readme = "README.md"
 
-[workspace.dependencies]
-ekphos-bases = { version = "=0.25.10", path = "crates/ekphos-bases" }
-ekphos-canvas = { version = "=0.25.10", path = "crates/ekphos-canvas" }
-ekphos-core = { version = "=0.25.10", path = "crates/ekphos-core" }
-ekphos-editor = { version = "=0.25.10", path = "crates/ekphos-editor" }
-ekphos-graph = { version = "=0.25.10", path = "crates/ekphos-graph" }
-ekphos-integrations = { version = "=0.25.10", path = "crates/ekphos-integrations" }
-ekphos-search = { version = "=0.25.10", path = "crates/ekphos-search" }
-ekphos-tasks = { version = "=0.25.10", path = "crates/ekphos-tasks" }
-ekphos-vault = { version = "=0.25.10", path = "crates/ekphos-vault" }
-ekphos-vim = { version = "=0.25.10", path = "crates/ekphos-vim" }
+[dependencies]
 ratatui = "=0.30.1"
 crossterm = "0.29"
 image = { version = "0.25", default-features = false, features = ["avif", "bmp", "dds", "exr", "ff", "gif", "hdr", "ico", "jpeg", "png", "pnm", "qoi", "rayon", "tga", "tiff", "webp"] }
@@ -66,35 +32,15 @@ htmd = "=0.5.0"
 serde_yaml = "0.9"
 bincode = "1.3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-clipboard-rs = { version = "0.3", default-features = false, features = ["wayland"] }
-libc = "0.2"
 memmap2 = "0.9"
 tikv-jemallocator = { version = "=0.7.0", default-features = false }
 tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 
-[dependencies]
-ekphos-core.workspace = true
-ekphos-canvas.workspace = true
-ekphos-editor.workspace = true
-ekphos-graph.workspace = true
-ekphos-integrations.workspace = true
-ekphos-vault.workspace = true
-ekphos-vim.workspace = true
-ratatui.workspace = true
-crossterm.workspace = true
-ratatui-image.workspace = true
-dirs.workspace = true
-unicode-width.workspace = true
-tikv-jemallocator.workspace = true
-
-[dev-dependencies]
-chrono.workspace = true
-ekphos-search.workspace = true
-image.workspace = true
-toml.workspace = true
+[target.'cfg(not(target_os = "android"))'.dependencies]
+clipboard-rs = { version = "0.3", default-features = false, features = ["wayland"] }
 
 [target.'cfg(unix)'.dependencies]
-libc.workspace = true
+libc = "0.2"
 
 [profile.release]
 opt-level = 3

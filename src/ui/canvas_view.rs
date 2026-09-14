@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use ekphos_canvas::{CanvasColor, CanvasEdge, CanvasEnd, CanvasNode, CanvasNodeKind, CanvasSide};
+use crate::canvas::{CanvasColor, CanvasEdge, CanvasEnd, CanvasNode, CanvasNodeKind, CanvasSide};
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Position, Rect},
@@ -306,7 +306,7 @@ pub fn render_canvas_view(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-fn fit_canvas_if_needed(app: &mut App, document: &ekphos_canvas::Canvas, graph_area: Rect) {
+fn fit_canvas_if_needed(app: &mut App, document: &crate::canvas::Canvas, graph_area: Rect) {
     if !app.structured.canvas.needs_fit {
         return;
     }
@@ -323,7 +323,7 @@ fn fit_canvas_if_needed(app: &mut App, document: &ekphos_canvas::Canvas, graph_a
     app.structured.canvas.needs_fit = false;
 }
 
-fn render_top_status(frame: &mut Frame, app: &App, document: &ekphos_canvas::Canvas, area: Rect, theme: &Theme) {
+fn render_top_status(frame: &mut Frame, app: &App, document: &crate::canvas::Canvas, area: Rect, theme: &Theme) {
     let zoom = (app.structured.canvas.zoom * 100.0).round() as i32;
     let mut spans = vec![Span::styled(format!(" {} nodes", document.nodes.len()), Style::default().fg(theme.foreground).add_modifier(Modifier::BOLD)), Span::styled(format!(" · {} connections · {zoom}%", document.edges.len()), Style::default().fg(theme.muted))];
     if let Some(editor) = app.structured.canvas.editor.as_ref() {

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(crate) use ekphos_integrations::text::cell_visible_width;
+pub(crate) use crate::text::cell_visible_width;
 
 /// Per-column minimum width when shrinking a wide table to fit the terminal.
 pub(super) const TABLE_COLUMN_MIN_WIDTH: usize = 8;

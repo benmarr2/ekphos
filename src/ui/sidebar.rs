@@ -84,9 +84,9 @@ pub fn render_sidebar(f: &mut Frame, view: SidebarView<'_>, area: Rect) -> Rect 
                 SidebarItemKind::Note { note_id } => {
                     let note = view.vault.notes.iter().find(|note| note.id == *note_id);
                     let icon = match note.map(|note| note.kind) {
-                        Some(ekphos_vault::VaultFileKind::Base) => "▦ ",
-                        Some(ekphos_vault::VaultFileKind::Canvas) => "◇ ",
-                        Some(ekphos_vault::VaultFileKind::Markdown) | None => "  ",
+                        Some(crate::vault::VaultFileKind::Base) => "▦ ",
+                        Some(crate::vault::VaultFileKind::Canvas) => "◇ ",
+                        Some(crate::vault::VaultFileKind::Markdown) | None => "  ",
                     };
                     let is_match = is_searching && view.vault.notes.iter().position(|note| note.id == *note_id).is_some_and(|index| view.search.search_matched_notes.contains(&index));
                     let style = if is_selected {

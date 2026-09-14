@@ -15,7 +15,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use super::panel::{full_view_block, full_view_inner};
 use crate::app::App;
 use crate::config::Theme;
-use ekphos_graph::{fit_zoom_for_bounds, GraphIndexNode, GraphMode, GraphNode, GraphRelation};
+use crate::graph::{fit_zoom_for_bounds, GraphIndexNode, GraphMode, GraphNode, GraphRelation};
 
 const NODE_WIDTH: u16 = 3;
 const NODE_HEIGHT: u16 = 2;
@@ -794,7 +794,7 @@ mod tests {
 
     #[test]
     fn bounds_are_finite_for_single_node() {
-        let mut node = GraphNode { note_id: ekphos_core::NoteId::new(0), x: 2.0, y: 3.0, home_x: 2.0, home_y: 3.0, depth: 0, relation: GraphRelation::Root, in_degree: 0, out_degree: 0 };
+        let mut node = GraphNode { note_id: crate::core::NoteId::new(0), x: 2.0, y: 3.0, home_x: 2.0, home_y: 3.0, depth: 0, relation: GraphRelation::Root, in_degree: 0, out_degree: 0 };
         assert_eq!(graph_bounds(std::slice::from_mut(&mut node)), (2.0, 3.0, 5.0, 6.0));
     }
 

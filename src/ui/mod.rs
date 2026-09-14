@@ -70,9 +70,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let sidebar_area = render_sidebar(f, SidebarView { theme: &app.state.theme, config: &app.state.config, vault: &app.vault, search: &app.search, focus: app.state.focus, mode: app.editor.mode, minimized: app.is_sidebar_minimized() }, chunks[0]);
     match app.editor.mode {
         Mode::Normal => match app.active_document_kind() {
-            Some(ekphos_vault::VaultFileKind::Base) => base_view::render_base_view(f, app, chunks[1]),
-            Some(ekphos_vault::VaultFileKind::Canvas) => canvas_view::render_canvas_view(f, app, chunks[1]),
-            Some(ekphos_vault::VaultFileKind::Markdown) | None => render_content(f, app, chunks[1]),
+            Some(crate::vault::VaultFileKind::Base) => base_view::render_base_view(f, app, chunks[1]),
+            Some(crate::vault::VaultFileKind::Canvas) => canvas_view::render_canvas_view(f, app, chunks[1]),
+            Some(crate::vault::VaultFileKind::Markdown) | None => render_content(f, app, chunks[1]),
         },
         Mode::Edit => {
             let layout = editor::editor_layout(app.state.zen_mode, app.state.config.style, chunks[1]);

@@ -10,7 +10,7 @@ use super::panel::{panel_surface, render_accent_bar, SurfaceKind};
 use crate::app::{BlockInsertMode, EditorSession};
 use crate::config::{Config, EditingMode, StyleMode, Theme};
 use crate::keybindings::{AppCommand, Keymap};
-use ekphos_vim::VimMode;
+use crate::vim::VimMode;
 
 #[derive(Clone, Copy)]
 pub struct EditorLayout {

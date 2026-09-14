@@ -739,91 +739,15 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 name = "ekphos"
 version = "0.25.10"
 dependencies = [
- "chrono",
- "crossterm",
- "dirs",
- "ekphos-canvas",
- "ekphos-core",
- "ekphos-editor",
- "ekphos-graph",
- "ekphos-integrations",
- "ekphos-search",
- "ekphos-vault",
- "ekphos-vim",
- "image",
- "libc",
- "ratatui",
- "ratatui-image",
- "tikv-jemallocator",
- "toml",
- "unicode-width",
-]
-
-[[package]]
-name = "ekphos-bases"
-version = "0.25.10"
-dependencies = [
- "chrono",
- "ekphos-core",
- "serde",
- "serde_yaml",
-]
-
-[[package]]
-name = "ekphos-canvas"
-version = "0.25.10"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "ekphos-core"
-version = "0.25.10"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "ekphos-editor"
-version = "0.25.10"
-dependencies = [
- "crossterm",
- "ekphos-core",
- "ekphos-tasks",
- "ratatui",
- "serde",
- "unicode-width",
-]
-
-[[package]]
-name = "ekphos-graph"
-version = "0.25.10"
-dependencies = [
  "bincode",
- "ekphos-core",
- "serde",
-]
-
-[[package]]
-name = "ekphos-integrations"
-version = "0.25.10"
-dependencies = [
  "chrono",
  "clipboard-rs",
  "crossterm",
  "dirs",
- "ekphos-bases",
- "ekphos-canvas",
- "ekphos-core",
- "ekphos-editor",
- "ekphos-graph",
- "ekphos-search",
- "ekphos-tasks",
- "ekphos-vault",
- "ekphos-vim",
  "htmd",
  "image",
+ "libc",
+ "memmap2",
  "ratatui",
  "ratatui-image",
  "ratex-layout",
@@ -831,50 +755,15 @@ dependencies = [
  "ratex-render",
  "ratex-types",
  "serde",
+ "serde_json",
  "serde_yaml",
  "syntect",
  "tikv-jemalloc-sys",
+ "tikv-jemallocator",
  "toml",
  "unicode-segmentation",
  "unicode-width",
  "ureq",
-]
-
-[[package]]
-name = "ekphos-search"
-version = "0.25.10"
-dependencies = [
- "bincode",
- "dirs",
- "ekphos-core",
- "memmap2",
- "serde",
-]
-
-[[package]]
-name = "ekphos-tasks"
-version = "0.25.10"
-dependencies = [
- "chrono",
- "ekphos-core",
-]
-
-[[package]]
-name = "ekphos-vault"
-version = "0.25.10"
-dependencies = [
- "chrono",
- "ekphos-core",
- "serde",
- "serde_yaml",
-]
-
-[[package]]
-name = "ekphos-vim"
-version = "0.25.10"
-dependencies = [
- "crossterm",
- "ekphos-editor",
 ]
 
 [[package]]

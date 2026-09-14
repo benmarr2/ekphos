@@ -7,11 +7,11 @@ use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 use crate::app::{App, BlockInsertMode, BlockInsertState, ContextMenuItem, ContextMenuState, DeleteType, DialogState, Focus, LinkInfo, Mode, SearchPickerState, SidebarItemKind, TaskFilterKind, WikiAutocompleteMode, WikiAutocompleteState};
 use crate::clipboard::{self, ClipboardContent};
 use crate::config::{Config, EditingMode};
+use crate::editor::{CursorMove, CursorShape, Position};
 use crate::keybindings::{AppCommand, KeyResolution};
 use crate::ui;
-use ekphos_editor::{CursorMove, CursorShape, Position};
-use ekphos_vim::command::{parse_command, Command};
-use ekphos_vim::{FindState, PendingFind, PendingMacro, PendingMark, TextObject, TextObjectScope, VimInputMode, VimMode};
+use crate::vim::command::{parse_command, Command};
+use crate::vim::{FindState, PendingFind, PendingMacro, PendingMark, TextObject, TextObjectScope, VimInputMode, VimMode};
 
 mod commands;
 mod dialogs;

@@ -20,7 +20,7 @@ fn handle_structured_document_key(app: &mut App, key: crossterm::event::KeyEvent
         return false;
     }
     match app.active_document_kind() {
-        Some(ekphos_vault::VaultFileKind::Base) => {
+        Some(crate::vault::VaultFileKind::Base) => {
             if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
                 return false;
             }
@@ -34,7 +34,7 @@ fn handle_structured_document_key(app: &mut App, key: crossterm::event::KeyEvent
                 _ => return false,
             }
         }
-        Some(ekphos_vault::VaultFileKind::Canvas) => {
+        Some(crate::vault::VaultFileKind::Canvas) => {
             let shifted = key.modifiers.contains(KeyModifiers::SHIFT);
             let alt = key.modifiers.contains(KeyModifiers::ALT);
             let command_modifier = key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER);
@@ -183,7 +183,7 @@ fn handle_structured_document_key(app: &mut App, key: crossterm::event::KeyEvent
                 _ => return false,
             }
         }
-        Some(ekphos_vault::VaultFileKind::Markdown) | None => return false,
+        Some(crate::vault::VaultFileKind::Markdown) | None => return false,
     }
     true
 }
@@ -294,9 +294,9 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
             Focus::Sidebar => app.next_sidebar_item(),
             Focus::Outline => app.next_outline(),
             Focus::Content => {
-                if app.active_document_kind() == Some(ekphos_vault::VaultFileKind::Base) {
+                if app.active_document_kind() == Some(crate::vault::VaultFileKind::Base) {
                     app.base_move_selection(1);
-                } else if app.active_document_kind() == Some(ekphos_vault::VaultFileKind::Canvas) {
+                } else if app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) {
                     app.canvas_move_selection(0.0, 1.0);
                 } else if app.editor.floating_cursor_mode {
                     app.floating_move_down();
@@ -310,9 +310,9 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
             Focus::Sidebar => app.previous_sidebar_item(),
             Focus::Outline => app.previous_outline(),
             Focus::Content => {
-                if app.active_document_kind() == Some(ekphos_vault::VaultFileKind::Base) {
+                if app.active_document_kind() == Some(crate::vault::VaultFileKind::Base) {
                     app.base_move_selection(-1);
-                } else if app.active_document_kind() == Some(ekphos_vault::VaultFileKind::Canvas) {
+                } else if app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) {
                     app.canvas_move_selection(0.0, -1.0);
                 } else if app.editor.floating_cursor_mode {
                     app.floating_move_up();
@@ -324,9 +324,9 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
         },
         AppCommand::Activate => match app.state.focus {
             Focus::Content => {
-                if app.active_document_kind() == Some(ekphos_vault::VaultFileKind::Base) {
+                if app.active_document_kind() == Some(crate::vault::VaultFileKind::Base) {
                     app.open_selected_base_row();
-                } else if app.active_document_kind() == Some(ekphos_vault::VaultFileKind::Canvas) {
+                } else if app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) {
                     app.canvas_activate_selected_node();
                 } else if !open_selected_content_target(app) {
                     app.open_current_image();
@@ -344,9 +344,9 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
         }
         AppCommand::OpenSelected => {
             if app.state.focus == Focus::Content {
-                if app.active_document_kind() == Some(ekphos_vault::VaultFileKind::Base) {
+                if app.active_document_kind() == Some(crate::vault::VaultFileKind::Base) {
                     app.open_selected_base_row();
-                } else if app.active_document_kind() == Some(ekphos_vault::VaultFileKind::Canvas) {
+                } else if app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) {
                     app.canvas_activate_selected_node();
                 } else if !open_selected_content_target(app) {
                     app.open_current_image();
@@ -360,16 +360,16 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
         AppCommand::SidebarSearch => app.activate_sidebar_search(),
         AppCommand::CycleSort => app.cycle_sort_mode(),
         AppCommand::ToggleEditorMode => {
-            if app.state.focus == Focus::Content && app.active_document_kind() == Some(ekphos_vault::VaultFileKind::Canvas) {
+            if app.state.focus == Focus::Content && app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) {
                 app.canvas_begin_node_edit();
             } else {
                 switch_editing_mode(app);
             }
         }
         AppCommand::ContentAction => {
-            if app.active_document_kind() == Some(ekphos_vault::VaultFileKind::Base) {
+            if app.active_document_kind() == Some(crate::vault::VaultFileKind::Base) {
                 app.open_selected_base_row();
-            } else if app.active_document_kind() == Some(ekphos_vault::VaultFileKind::Canvas) {
+            } else if app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) {
                 app.canvas_activate_selected_node();
             } else if let Some(crate::app::ContentItem::TaskItem { .. }) = app.document.content_items.get(app.document.content_cursor) {
                 if app.is_task_checkbox_selected() || !open_selected_content_target(app) {
@@ -410,9 +410,9 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
             Focus::Sidebar => app.goto_first_sidebar_item(),
             Focus::Outline => app.goto_first_outline(),
             Focus::Content => {
-                if app.active_document_kind() == Some(ekphos_vault::VaultFileKind::Base) {
+                if app.active_document_kind() == Some(crate::vault::VaultFileKind::Base) {
                     app.structured.base.selected_row = 0;
-                } else if app.active_document_kind() == Some(ekphos_vault::VaultFileKind::Canvas) {
+                } else if app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) {
                     app.structured.canvas.selected_node = 0;
                 } else {
                     app.goto_first_content_line();
@@ -424,10 +424,10 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
             Focus::Sidebar => app.goto_last_sidebar_item(),
             Focus::Outline => app.goto_last_outline(),
             Focus::Content => {
-                if app.active_document_kind() == Some(ekphos_vault::VaultFileKind::Base) {
+                if app.active_document_kind() == Some(crate::vault::VaultFileKind::Base) {
                     let count = app.structured.base.result.as_ref().map(|result| result.groups.iter().map(|group| group.rows.len()).sum::<usize>()).unwrap_or(0);
                     app.structured.base.selected_row = count.saturating_sub(1);
-                } else if app.active_document_kind() == Some(ekphos_vault::VaultFileKind::Canvas) {
+                } else if app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) {
                     let count = app.structured.canvas.document.as_ref().map_or(0, |canvas| canvas.nodes.len());
                     app.structured.canvas.selected_node = count.saturating_sub(1);
                 } else {

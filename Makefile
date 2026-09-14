@@ -52,27 +52,27 @@ run-release:
 
 # Run tests
 test:
-	cargo test --workspace --all-targets --no-fail-fast --locked
+	cargo test --all-targets --no-fail-fast --locked
 
 # Check code without building
 check:
-	cargo check --workspace --all-targets --locked
+	cargo check --all-targets --locked
 
 # Format code
 fmt:
-	cargo fmt --all
+	cargo fmt
 
 # Format check (CI)
 fmt-check:
-	cargo fmt --all -- --check
+	cargo fmt -- --check
 
 # Lint with clippy
 lint:
-	cargo clippy --workspace --all-targets --locked -- -D warnings
+	cargo clippy --all-targets --locked -- -D warnings
 
-# Package every workspace crate in publish order and smoke-test installation.
+# Verify the single publishable package.
 package:
-	scripts/package-workspace.sh
+	cargo package --allow-dirty --locked
 
 # Exercise the built CLI without consulting user configuration.
 smoke: release
@@ -165,7 +165,7 @@ help:
 	@echo "  check        Check code without building"
 	@echo "  fmt          Format code with rustfmt"
 	@echo "  lint         Lint code with clippy"
-	@echo "  package      Package/install-smoke every workspace crate"
+	@echo "  package      Verify the publishable crate package"
 	@echo "  smoke        Build and verify the CLI version"
 	@echo "  verify       Run the complete local release gate"
 	@echo "  clean        Remove build artifacts"

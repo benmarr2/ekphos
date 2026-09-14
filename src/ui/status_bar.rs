@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::app::{App, BlockInsertMode, Focus, Mode};
 use crate::config::EditingMode;
-use ekphos_vim::VimMode;
+use crate::vim::VimMode;
 
 pub fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
     const ZEN_MAX_WIDTH: u16 = 95;
@@ -92,23 +92,23 @@ pub fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
             }
             if let Some(scope) = &vim.pending_text_object_scope {
                 let ch = match scope {
-                    ekphos_vim::TextObjectScope::Inner => 'i',
-                    ekphos_vim::TextObjectScope::Around => 'a',
+                    crate::vim::TextObjectScope::Inner => 'i',
+                    crate::vim::TextObjectScope::Around => 'a',
                 };
                 pending_parts.push(format!("{}", ch));
             }
             if let Some(mark) = &vim.pending_mark {
                 let ch = match mark {
-                    ekphos_vim::PendingMark::Set => 'm',
-                    ekphos_vim::PendingMark::GotoExact => '`',
-                    ekphos_vim::PendingMark::GotoLine => '\'',
+                    crate::vim::PendingMark::Set => 'm',
+                    crate::vim::PendingMark::GotoExact => '`',
+                    crate::vim::PendingMark::GotoLine => '\'',
                 };
                 pending_parts.push(format!("{}", ch));
             }
             if let Some(mac) = &vim.pending_macro {
                 let ch = match mac {
-                    ekphos_vim::PendingMacro::Record => 'q',
-                    ekphos_vim::PendingMacro::Play => '@',
+                    crate::vim::PendingMacro::Record => 'q',
+                    crate::vim::PendingMacro::Play => '@',
                 };
                 pending_parts.push(format!("{}", ch));
             }

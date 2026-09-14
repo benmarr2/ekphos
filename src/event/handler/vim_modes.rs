@@ -407,7 +407,7 @@ pub(super) fn handle_vim_search_mode(app: &mut App, key: crossterm::event::KeyEv
         KeyCode::Enter => {
             if !app.editor.vim.search_buffer.is_empty() {
                 app.editor.vim.search_pattern = Some(app.editor.vim.search_buffer.clone());
-                app.editor.vim.search_direction = if forward { ekphos_vim::SearchDirection::Forward } else { ekphos_vim::SearchDirection::Backward };
+                app.editor.vim.search_direction = if forward { crate::vim::SearchDirection::Forward } else { crate::vim::SearchDirection::Backward };
                 app.search.buffer_search.query = app.editor.vim.search_buffer.clone();
                 app.search.buffer_search.direction = if forward { crate::app::SearchDirection::Forward } else { crate::app::SearchDirection::Backward };
                 app.perform_buffer_search();

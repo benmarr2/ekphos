@@ -153,7 +153,7 @@ pub(super) fn prepare_inline_math(app: &mut App, viewport_width: u16, render_ima
                     ContentItem::TaskItem { text, .. } => document.slice(*text),
                     _ => return None,
                 };
-                let math = ekphos_core::markdown::inline_math(source).into_iter().map(|expression| expression.source.to_string()).collect::<Vec<_>>();
+                let math = crate::core::markdown::inline_math(source).into_iter().map(|expression| expression.source.to_string()).collect::<Vec<_>>();
                 (!math.is_empty()).then_some((item_index, math))
             })
             .collect(),

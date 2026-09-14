@@ -1,5 +1,23 @@
+pub mod app;
+pub mod bases;
+pub mod canvas;
+pub mod clipboard;
+pub mod config;
+pub mod core;
+pub mod editor;
 pub mod event;
+mod frontmatter_templates;
+pub mod graph;
+pub mod highlight;
+pub mod highlight_worker;
+pub(crate) mod image_service;
+pub mod keybindings;
+pub mod panel;
+pub mod release;
+pub mod search;
+pub mod syntax_service;
+pub mod tasks;
+pub mod text;
 pub mod ui;
-
-pub(crate) use ekphos_integrations::image_service;
-pub use ekphos_integrations::{app, clipboard, config, highlight, keybindings, panel, syntax_service};
+pub mod vault;
+pub mod vim;

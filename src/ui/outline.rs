@@ -54,7 +54,7 @@ pub fn render_outline(f: &mut Frame, view: OutlineView<'_>, area: Rect) -> Outli
             };
             let source_line = item.source_line as usize;
             let raw_title = if view.editor.mode == Mode::Edit { view.editor.line(source_line).unwrap_or("") } else { view.snapshot.and_then(|document| document.line(source_line)).unwrap_or("") };
-            let title = ekphos_core::markdown::heading(raw_title).map_or(raw_title, |heading| heading.text);
+            let title = crate::core::markdown::heading(raw_title).map_or(raw_title, |heading| heading.text);
             ListItem::new(Line::from(Span::styled(format!("{}{}{}", indent, prefix, expand_tabs(title)), style)))
         })
         .collect();

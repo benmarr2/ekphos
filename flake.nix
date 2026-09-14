@@ -16,7 +16,7 @@
       {
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "ekphos";
-          version = manifest.workspace.package.version;
+          version = manifest.package.version;
 
           src = ./.;
 
@@ -25,7 +25,7 @@
           };
 
           cargoBuildFlags = [ "--locked" ];
-          cargoTestFlags = [ "--workspace" "--all-targets" "--locked" ];
+          cargoTestFlags = [ "--all-targets" "--locked" ];
 
           nativeBuildInputs = with pkgs; [
             pkg-config

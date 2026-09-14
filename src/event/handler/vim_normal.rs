@@ -29,7 +29,7 @@ pub(super) fn handle_vim_normal_mode(app: &mut App, key: crossterm::event::KeyEv
             app.editor.delete_char();
             app.editor.insert_char(c);
             app.editor.move_cursor(CursorMove::Back);
-            app.editor.vim.last_change = Some(ekphos_vim::LastChange::ReplaceChar(c));
+            app.editor.vim.last_change = Some(crate::vim::LastChange::ReplaceChar(c));
         }
         app.editor.vim.reset_pending();
         return;
@@ -81,11 +81,11 @@ pub(super) fn handle_vim_normal_mode(app: &mut App, key: crossterm::event::KeyEv
             match pending {
                 PendingMark::Set => {
                     let pos = app.editor.cursor();
-                    app.editor.vim.marks.set(c, ekphos_editor::Position::new(pos.0, pos.1));
+                    app.editor.vim.marks.set(c, crate::editor::Position::new(pos.0, pos.1));
                 }
                 PendingMark::GotoExact => {
                     if let Some(pos) = app.editor.vim.marks.get(c) {
-                        app.editor.vim.marks.set_last_jump(ekphos_editor::Position::new(app.editor.cursor().0, app.editor.cursor().1));
+                        app.editor.vim.marks.set_last_jump(crate::editor::Position::new(app.editor.cursor().0, app.editor.cursor().1));
                         app.editor.move_cursor(CursorMove::GoToLine(pos.row + 1));
                         for _ in 0..pos.col {
                             app.editor.move_cursor(CursorMove::Forward);
@@ -94,7 +94,7 @@ pub(super) fn handle_vim_normal_mode(app: &mut App, key: crossterm::event::KeyEv
                 }
                 PendingMark::GotoLine => {
                     if let Some(pos) = app.editor.vim.marks.get(c) {
-                        app.editor.vim.marks.set_last_jump(ekphos_editor::Position::new(app.editor.cursor().0, app.editor.cursor().1));
+                        app.editor.vim.marks.set_last_jump(crate::editor::Position::new(app.editor.cursor().0, app.editor.cursor().1));
                         app.editor.move_cursor(CursorMove::GoToLine(pos.row + 1));
                         app.editor.move_cursor(CursorMove::FirstNonBlank);
                     }
@@ -443,7 +443,7 @@ pub(super) fn handle_vim_normal_mode(app: &mut App, key: crossterm::event::KeyEv
                 for _ in 0..count {
                     app.editor.delete_current_line();
                 }
-                app.editor.vim.last_change = Some(ekphos_vim::LastChange::DeleteLine(count));
+                app.editor.vim.last_change = Some(crate::vim::LastChange::DeleteLine(count));
                 app.editor.vim.reset_pending();
             } else {
                 app.editor.pending_operator = Some('d');
@@ -523,7 +523,7 @@ pub(super) fn handle_vim_normal_mode(app: &mut App, key: crossterm::event::KeyEv
                 }
             }
             if deleted > 0 {
-                app.editor.vim.last_change = Some(ekphos_vim::LastChange::DeleteCharForward(deleted));
+                app.editor.vim.last_change = Some(crate::vim::LastChange::DeleteCharForward(deleted));
             }
             app.editor.vim.reset_pending();
         }
@@ -532,7 +532,7 @@ pub(super) fn handle_vim_normal_mode(app: &mut App, key: crossterm::event::KeyEv
             for _ in 0..count {
                 app.editor.delete_newline();
             }
-            app.editor.vim.last_change = Some(ekphos_vim::LastChange::DeleteCharBackward(count));
+            app.editor.vim.last_change = Some(crate::vim::LastChange::DeleteCharBackward(count));
             app.editor.vim.reset_pending();
         }
         KeyCode::Char('s') if key.modifiers.is_empty() => {
@@ -686,8 +686,8 @@ pub(super) fn handle_vim_normal_mode(app: &mut App, key: crossterm::event::KeyEv
 }
 
 /// Repeat the last change command (. dot command)
-pub(super) fn repeat_last_change(app: &mut App, change: ekphos_vim::LastChange) {
-    use ekphos_vim::LastChange;
+pub(super) fn repeat_last_change(app: &mut App, change: crate::vim::LastChange) {
+    use crate::vim::LastChange;
     match change {
         LastChange::DeleteLine(count) => {
             for _ in 0..count {
@@ -742,7 +742,7 @@ pub(super) fn execute_motion_n(app: &mut App, movement: CursorMove) {
 }
 
 pub(super) fn execute_motion_or_operator(app: &mut App, movement: CursorMove) {
-    use ekphos_vim::LastChange;
+    use crate::vim::LastChange;
     let count = app.editor.vim.get_count();
     if let Some(op) = app.editor.pending_operator.take() {
         let start_pos = app.editor.cursor();
@@ -887,7 +887,7 @@ pub(super) fn execute_find(app: &mut App, find: FindState) {
 pub(super) fn execute_text_object(app: &mut App, scope: TextObjectScope, obj: TextObject) {
     let pos = app.editor.cursor();
     let lines = app.editor.snapshot();
-    let cursor_pos = ekphos_editor::Position::new(pos.0, pos.1);
+    let cursor_pos = crate::editor::Position::new(pos.0, pos.1);
     if let Some((start, end)) = obj.find_bounds_snapshot(scope, &lines, cursor_pos) {
         if let Some(op) = app.editor.pending_operator.take() {
             app.editor.set_cursor(start.row, start.col);
