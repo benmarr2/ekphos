@@ -50,7 +50,7 @@ docker build -t ekphos .    # Linux container
 
 ## Community
 
-- Join the [nostacks Discord](https://discord.gg/R5dEQZfvb) for help, ideas, conversations, and project updates
+- Join the [nostacks Discord](https://discord.gg/XBDstnqXVb) for help, ideas, conversations, and project updates
 
 ## Disclaimer
 
