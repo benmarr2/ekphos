@@ -90,6 +90,26 @@ impl App {
         self.update_outline();
     }
 
+    pub fn open_changelog(&mut self) {
+        self.state.changelog_scroll = 0;
+        self.state.changelog_links.clear();
+        self.state.show_changelog = true;
+    }
+
+    pub fn dismiss_changelog(&mut self) {
+        self.state.show_changelog = false;
+        self.state.changelog_scroll = 0;
+        self.state.changelog_links.clear();
+        let current_version = env!("CARGO_PKG_VERSION");
+        if self.state.config.last_seen_changelog_version.as_deref() == Some(current_version) {
+            return;
+        }
+        self.state.config.last_seen_changelog_version = Some(current_version.to_string());
+        if let Err(error) = self.state.config.save_to_dir(&self.dependencies.config_dir) {
+            self.show_error_toast(format!("Could not remember the dismissed changelog: {error}"));
+        }
+    }
+
     /// Swap the active runtime theme without touching config or reloading notes
     /// from disk. Content/editor views read `self.state.theme` live each frame, so the
     /// whole UI re-skins on the next render; the syntect code-block highlighter
@@ -219,5 +239,43 @@ impl App {
         } else {
             self.state.status_message = Some(format!("Journal failed to load: {display_path}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn unseen_changelog_is_persisted_on_dismiss_and_can_be_reopened() {
+        let id = NEXT_ROOT.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("ekphos-changelog-{}-{id}", std::process::id()));
+        let vault = root.join("vault");
+        let config_dir = root.join("config");
+        let cache_dir = root.join("cache");
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(vault.join("note.md"), "# Note\n").unwrap();
+
+        let config = Config { general: crate::config::GeneralConfig { last_seen_changelog_version: None, ..Default::default() }, ..Default::default() };
+        let dependencies = AppDependencies::headless(config_dir.clone(), cache_dir.clone());
+        let mut app = App::new_injected(config, vault.clone(), None, dependencies);
+        assert!(app.state.show_changelog);
+
+        app.dismiss_changelog();
+        assert!(!app.state.show_changelog);
+        let saved = Config::load_from_dir(&config_dir);
+        assert_eq!(saved.last_seen_changelog_version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+
+        let dependencies = AppDependencies::headless(config_dir, cache_dir);
+        let mut restarted = App::new_injected(saved, vault, None, dependencies);
+        assert!(!restarted.state.show_changelog);
+        restarted.open_changelog();
+        assert!(restarted.state.show_changelog);
+        assert_eq!(restarted.state.changelog_scroll, 0);
+
+        let _ = fs::remove_dir_all(root);
     }
 }

@@ -15,6 +15,7 @@ pub enum AppCommand {
     GoLast,
     Activate,
     ShowHelp,
+    ShowChangelog,
     ReloadFiles,
     ReloadConfig,
     OpenQuickSearch,
@@ -57,7 +58,7 @@ pub enum AppCommand {
 }
 
 impl AppCommand {
-    pub const ALL: [Self; 48] = [
+    pub const ALL: [Self; 49] = [
         Self::Quit,
         Self::FocusNext,
         Self::FocusPrevious,
@@ -67,6 +68,7 @@ impl AppCommand {
         Self::GoLast,
         Self::Activate,
         Self::ShowHelp,
+        Self::ShowChangelog,
         Self::ReloadFiles,
         Self::ReloadConfig,
         Self::OpenQuickSearch,
@@ -119,6 +121,7 @@ impl AppCommand {
             Self::GoLast => "go_last",
             Self::Activate => "activate",
             Self::ShowHelp => "show_help",
+            Self::ShowChangelog => "show_changelog",
             Self::ReloadFiles => "reload_files",
             Self::ReloadConfig => "reload_config",
             Self::OpenQuickSearch => "open_quick_search",
@@ -176,6 +179,7 @@ impl AppCommand {
             Self::GoLast => &["shift+g"],
             Self::Activate => &["enter"],
             Self::ShowHelp => &["?"],
+            Self::ShowChangelog => &["f2"],
             Self::ReloadFiles => &["shift+r"],
             Self::ReloadConfig => &["ctrl+shift+r"],
             Self::OpenQuickSearch => &["ctrl+k"],
@@ -570,6 +574,13 @@ mod tests {
     fn editor_mode_toggle_defaults_to_f6() {
         let keymap = Keymap::default();
         assert_eq!(keymap.binding_label(AppCommand::ToggleEditorMode), "F6");
+    }
+
+    #[test]
+    fn changelog_defaults_to_f2() {
+        let mut keymap = Keymap::default();
+        assert_eq!(keymap.binding_label(AppCommand::ShowChangelog), "F2");
+        assert_eq!(keymap.resolve(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE), |_| true), KeyResolution::Command(AppCommand::ShowChangelog));
     }
 
     #[test]

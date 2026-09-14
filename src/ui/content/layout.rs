@@ -4,7 +4,7 @@ pub fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
     app.begin_image_frame();
     let mut code_block_highlights = std::collections::HashMap::new();
     let is_focused = app.state.focus == Focus::Content && app.editor.mode == Mode::Normal;
-    let skip_images = app.state.dialog != DialogState::None || app.state.show_welcome;
+    let skip_images = app.state.dialog != DialogState::None || app.state.show_welcome || app.state.show_changelog;
     let theme_snapshot = app.state.theme.clone();
     let theme = &theme_snapshot;
     let accent = if app.editor.floating_cursor_mode { theme.warning } else { theme.primary };

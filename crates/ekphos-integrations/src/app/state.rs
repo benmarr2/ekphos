@@ -225,6 +225,7 @@ impl AppBuilder {
             }
         };
         let input_buffer = config.notes_dir.clone();
+        let show_changelog = config.last_seen_changelog_version.as_deref() != Some(env!("CARGO_PKG_VERSION"));
         let sidebar_collapsed = config.sidebar_collapsed;
         let outline_collapsed = config.outline_collapsed;
         let frontmatter_hidden = config.frontmatter_hidden;
@@ -244,6 +245,7 @@ impl AppBuilder {
             state: UiState {
                 focus: Focus::Sidebar,
                 show_welcome,
+                show_changelog,
                 theme,
                 config,
                 dialog,
@@ -266,6 +268,8 @@ impl AppBuilder {
                 status_message: None,
                 toast: None,
                 help_scroll: 0,
+                changelog_scroll: 0,
+                changelog_links: Vec::new(),
                 theme_picker: None,
             },
             dependencies,

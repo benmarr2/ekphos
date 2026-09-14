@@ -59,6 +59,24 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEv
         }
         return;
     }
+    if app.state.dialog == DialogState::None && !app.state.show_welcome && app.state.show_changelog {
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let pointer = ratatui::layout::Position::new(mouse_x, mouse_y);
+                if let Some(url) = app.state.changelog_links.iter().find(|(area, _)| area.contains(pointer)).map(|(_, url)| url.clone()) {
+                    app.open_link(&url);
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                app.state.changelog_scroll = app.state.changelog_scroll.saturating_add(1);
+            }
+            MouseEventKind::ScrollUp => {
+                app.state.changelog_scroll = app.state.changelog_scroll.saturating_sub(1);
+            }
+            _ => {}
+        }
+        return;
+    }
     if app.state.dialog == DialogState::GraphView {
         handle_graph_view_mouse(app, mouse);
         return;
@@ -71,7 +89,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEv
         handle_edit_mode_mouse(app, mouse);
         return;
     }
-    if app.editor.mode == Mode::Normal && app.state.dialog == DialogState::None && !app.state.show_welcome {
+    if app.editor.mode == Mode::Normal && app.state.dialog == DialogState::None && !app.state.show_welcome && !app.state.show_changelog {
         let in_content_area = mouse_x >= app.state.content_area.x && mouse_x < app.state.content_area.x + app.state.content_area.width && mouse_y >= app.state.content_area.y && mouse_y < app.state.content_area.y + app.state.content_area.height;
         if !in_content_area && app.canvas_editor_active() && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) && !app.canvas_commit_node_edit() {
             return;

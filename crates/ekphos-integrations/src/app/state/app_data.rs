@@ -926,6 +926,7 @@ impl DerefMut for GraphState {
 pub struct UiState {
     pub focus: Focus,
     pub show_welcome: bool,
+    pub show_changelog: bool,
     pub theme: Theme,
     pub config: Config,
     pub dialog: DialogState,
@@ -948,6 +949,8 @@ pub struct UiState {
     pub status_message: Option<String>, // Status message shown next to path
     pub toast: Option<Toast>,           // Transient error/info notification overlay
     pub help_scroll: usize,
+    pub changelog_scroll: usize,
+    pub changelog_links: Vec<(Rect, String)>,
     pub theme_picker: Option<ThemePicker>,
 }
 

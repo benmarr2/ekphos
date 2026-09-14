@@ -122,6 +122,11 @@ pub(super) fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent) -
         handle_welcome_dialog(app, key);
         return Ok(false);
     }
+    if app.state.show_changelog {
+        app.state.keymap.reset_pending();
+        handle_changelog_dialog(app, key);
+        return Ok(false);
+    }
     if !matches!(app.search.search_picker, SearchPickerState::Closed) {
         app.state.keymap.reset_pending();
         handle_search_picker_input(app, key);
@@ -623,6 +628,42 @@ pub(super) fn handle_welcome_dialog(app: &mut App, key: crossterm::event::KeyEve
     }
 }
 
+pub(super) fn handle_changelog_dialog(app: &mut App, key: crossterm::event::KeyEvent) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => app.dismiss_changelog(),
+        KeyCode::Char('o') => {
+            if let Some(url) = app.state.changelog_links.first().map(|(_, url)| url.clone()) {
+                app.open_link(&url);
+            }
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.state.changelog_scroll = app.state.changelog_scroll.saturating_add(1);
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.state.changelog_scroll = app.state.changelog_scroll.saturating_sub(1);
+        }
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.state.changelog_scroll = app.state.changelog_scroll.saturating_add(5);
+        }
+        KeyCode::PageDown => {
+            app.state.changelog_scroll = app.state.changelog_scroll.saturating_add(5);
+        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.state.changelog_scroll = app.state.changelog_scroll.saturating_sub(5);
+        }
+        KeyCode::PageUp => {
+            app.state.changelog_scroll = app.state.changelog_scroll.saturating_sub(5);
+        }
+        KeyCode::Char('g') | KeyCode::Home => {
+            app.state.changelog_scroll = 0;
+        }
+        KeyCode::Char('G') | KeyCode::End => {
+            app.state.changelog_scroll = usize::MAX;
+        }
+        _ => {}
+    }
+}
+
 pub(super) fn handle_task_view_dialog(app: &mut App, key: crossterm::event::KeyEvent) {
     if app.tasks.text_input_active {
         match key.code {
@@ -723,6 +764,20 @@ mod tests {
             std::thread::yield_now();
         }
         (app, vault)
+    }
+
+    #[test]
+    fn changelog_keys_scroll_and_dismiss() {
+        let (mut app, _) = task_view_app();
+        app.state.dialog = DialogState::None;
+        app.open_changelog();
+
+        handle_changelog_dialog(&mut app, key(KeyCode::Down));
+        assert_eq!(app.state.changelog_scroll, 1);
+        handle_changelog_dialog(&mut app, key(KeyCode::Up));
+        assert_eq!(app.state.changelog_scroll, 0);
+        handle_changelog_dialog(&mut app, key(KeyCode::Enter));
+        assert!(!app.state.show_changelog);
     }
 
     fn visible_texts(app: &App) -> Vec<String> {

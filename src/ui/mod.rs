@@ -46,8 +46,8 @@ fn main_layout_constraints(zen_mode: bool, sidebar_collapsed: bool, outline_coll
 pub(crate) use content::content_item_click_col;
 pub use content::render_content;
 pub use dialogs::{
-    render_create_folder_dialog, render_create_note_dialog, render_create_note_in_folder_dialog, render_create_wiki_note_dialog, render_delete_confirm_dialog, render_delete_folder_confirm_dialog, render_directory_not_found_dialog, render_empty_directory_dialog, render_help_dialog,
-    render_keybinding_warning, render_onboarding_dialog, render_rename_folder_dialog, render_rename_note_dialog, render_unsaved_changes_dialog, render_welcome_dialog,
+    render_changelog_dialog, render_create_folder_dialog, render_create_note_dialog, render_create_note_in_folder_dialog, render_create_wiki_note_dialog, render_delete_confirm_dialog, render_delete_folder_confirm_dialog, render_directory_not_found_dialog, render_empty_directory_dialog,
+    render_help_dialog, render_keybinding_warning, render_onboarding_dialog, render_rename_folder_dialog, render_rename_note_dialog, render_unsaved_changes_dialog, render_welcome_dialog,
 };
 pub use outline::{render_outline, OutlineView};
 pub use sidebar::{render_sidebar, SidebarView};
@@ -132,6 +132,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
         DialogState::None => {
             if app.state.show_welcome {
                 render_welcome_dialog(f, &app.state.theme);
+            } else if app.state.show_changelog {
+                let action = render_changelog_dialog(f, app);
+                app.state.changelog_scroll = action.scroll;
+                app.state.changelog_links = action.links;
             }
         }
     }
@@ -629,6 +633,40 @@ mod tests {
         fixture.app.state.dialog = DialogState::CreateNote;
         fixture.app.state.input_buffer = "deterministic-note".to_string();
         assert_eq!(fixture.hash(72, 22), 16_799_502_509_508_382_863);
+    }
+
+    #[test]
+    fn changelog_modal_renders_announcement_before_summary() {
+        let mut fixture = GoldenApp::new();
+        fixture.app.open_changelog();
+        let buffer = draw(&mut fixture, 80, 24);
+        let content = (0..24).map(|y| row_text(&buffer, y)).collect::<String>();
+        assert!(content.contains("What's new in Ekphos"), "{content}");
+        let announcement = content.find("Announcement").expect("announcement heading");
+        let summary = content.find("Summary").expect("summary heading");
+        assert!(announcement < summary, "{content}");
+
+        let [(link_area, url)] = fixture.app.state.changelog_links.as_slice() else {
+            panic!("expected one changelog link, got {:?}", fixture.app.state.changelog_links);
+        };
+        assert_eq!(url, "https://discord.gg/XBDstnqXVb");
+        assert!(link_area.width > 0, "Discord link should be visible and clickable");
+        let link_cell = &buffer[(link_area.x, link_area.y)];
+        assert_eq!(link_cell.fg, fixture.app.state.theme.content.link);
+        assert_eq!(link_cell.bg, fixture.app.state.theme.flat.surface_raised);
+        assert!(link_cell.modifier.contains(ratatui::style::Modifier::UNDERLINED));
+        let announcement_row = (0..24).find(|&y| row_text(&buffer, y).contains("Announcement")).expect("announcement row");
+        let announcement_x = column_of(&buffer, announcement_row, "A").expect("announcement column");
+        let card_x = (0..80).find(|&x| buffer[(x, announcement_row)].bg == fixture.app.state.theme.flat.surface_raised).expect("announcement card edge");
+        assert_eq!(announcement_x, card_x + 2, "announcement copy should have two columns of internal padding");
+        let card_top = (0..24).find(|&y| buffer[(card_x, y)].bg == fixture.app.state.theme.flat.surface_raised).expect("announcement card top");
+        assert_eq!(announcement_row, card_top + 1, "announcement card should have one row of top padding");
+
+        let footer_row = (0..24).find(|&y| row_text(&buffer, y).contains("Open Discord")).expect("footer row");
+        let footer_gap = (3..77).map(|x| buffer[(x, footer_row - 1)].symbol()).collect::<String>();
+        assert!(footer_gap.trim().is_empty(), "footer should have a blank row above it: {footer_gap:?}");
+
+        let _ = draw(&mut fixture, 40, 12);
     }
 
     #[test]

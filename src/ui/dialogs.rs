@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
@@ -11,6 +11,8 @@ use crate::config::{EditingMode, Theme};
 use crate::keybindings::{AppCommand, KeybindingFallback};
 
 const TITLE_MAIN: &[&str] = &["████████ ██   ██ ██████  ██   ██  ██████  ███████", "██       ██  ██  ██   ██ ██   ██ ██    ██ ██     ", "█████    █████   ██████  ███████ ██    ██ ███████", "██       ██  ██  ██      ██   ██ ██    ██      ██", "████████ ██   ██ ██      ██   ██  ██████  ███████"];
+const CHANGELOG: &str = include_str!("../../CHANGELOG.md");
+const ANNOUNCEMENT_HORIZONTAL_PADDING: usize = 2;
 
 struct HelpEntry {
     commands: &'static [AppCommand],
@@ -27,6 +29,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
         title: "Global",
         entries: &[
             HelpEntry { commands: &[AppCommand::ShowHelp], description: "Show help" },
+            HelpEntry { commands: &[AppCommand::ShowChangelog], description: "Show what's new" },
             HelpEntry { commands: &[AppCommand::Quit], description: "Quit" },
             HelpEntry { commands: &[AppCommand::FocusNext], description: "Focus next panel" },
             HelpEntry { commands: &[AppCommand::FocusPrevious], description: "Focus previous panel" },
@@ -156,6 +159,162 @@ pub fn render_welcome_dialog(f: &mut Frame, theme: &Theme) {
     ]);
     let welcome = Paragraph::new(welcome_text).block(Block::default().title(" Welcome ").borders(Borders::ALL).border_style(Style::default().fg(dialog_theme.border)).style(Style::default().bg(dialog_theme.background))).alignment(Alignment::Center);
     f.render_widget(welcome, dialog_area);
+}
+
+fn release_notes<'a>(markdown: &'a str, version: &str) -> Option<&'a str> {
+    let heading = format!("## [{version}]");
+    let heading_start = markdown.find(&heading)?;
+    let after_heading = &markdown[heading_start + heading.len()..];
+    let body_start = after_heading.find('\n').map_or(0, |index| index + 1);
+    let body = &after_heading[body_start..];
+    let body_end = body.find("\n## [").unwrap_or(body.len());
+    Some(body[..body_end].trim())
+}
+
+fn wrap_words(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut wrapped = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let next_width = unicode_width::UnicodeWidthStr::width(current.as_str()) + usize::from(!current.is_empty()) + unicode_width::UnicodeWidthStr::width(word);
+        if !current.is_empty() && next_width > width {
+            wrapped.push(std::mem::take(&mut current));
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() || wrapped.is_empty() {
+        wrapped.push(current);
+    }
+    wrapped
+}
+
+struct ChangelogLine {
+    line: Line<'static>,
+    announcement: bool,
+    link: Option<(usize, usize, String)>,
+}
+
+fn external_url_range(text: &str) -> Option<(usize, usize)> {
+    let start = ["https://", "http://"].into_iter().filter_map(|scheme| text.find(scheme)).min()?;
+    let mut end = start + text[start..].find(char::is_whitespace).unwrap_or(text.len() - start);
+    while let Some(last) = text[..end].chars().next_back().filter(|character| ".,;:!?)]}".contains(*character)) {
+        end -= last.len_utf8();
+    }
+    (end > start).then_some((start, end))
+}
+
+fn changelog_text_line(prefix: &str, prefix_style: Style, text: String, text_style: Style, link_color: ratatui::style::Color, announcement: bool) -> ChangelogLine {
+    let Some((url_start, url_end)) = external_url_range(&text) else {
+        return ChangelogLine { line: Line::from(vec![Span::styled(prefix.to_string(), prefix_style), Span::styled(text, text_style)]), announcement, link: None };
+    };
+    let before = &text[..url_start];
+    let url = &text[url_start..url_end];
+    let after = &text[url_end..];
+    let link_start = unicode_width::UnicodeWidthStr::width(prefix) + unicode_width::UnicodeWidthStr::width(before);
+    let link_width = unicode_width::UnicodeWidthStr::width(url);
+    ChangelogLine {
+        line: Line::from(vec![Span::styled(prefix.to_string(), prefix_style), Span::styled(before.to_string(), text_style), Span::styled(url.to_string(), text_style.fg(link_color).add_modifier(Modifier::UNDERLINED)), Span::styled(after.to_string(), text_style)]),
+        announcement,
+        link: Some((link_start, link_width, url.to_string())),
+    }
+}
+
+fn changelog_lines(notes: &str, theme: &Theme, width: u16) -> Vec<ChangelogLine> {
+    let mut lines = Vec::new();
+    let mut announcement = false;
+    let width = width as usize;
+    for source in notes.lines() {
+        let line = source.trim();
+        if let Some(title) = line.strip_prefix("### ") {
+            announcement = title == "Announcement";
+            if !lines.is_empty() {
+                lines.push(ChangelogLine { line: Line::from(""), announcement, link: None });
+            }
+            if announcement {
+                lines.push(ChangelogLine { line: Line::from(""), announcement: true, link: None });
+            }
+            let color = if announcement { theme.warning } else { theme.dialog.title };
+            let prefix = if announcement { " ".repeat(ANNOUNCEMENT_HORIZONTAL_PADDING) } else { String::new() };
+            lines.push(ChangelogLine { line: Line::from(vec![Span::raw(prefix), Span::styled(title.to_string(), Style::default().fg(color).add_modifier(Modifier::BOLD))]), announcement, link: None });
+        } else if let Some(item) = line.strip_prefix("- ") {
+            let marker_color = if announcement { theme.warning } else { theme.primary };
+            let card_padding = if announcement { ANNOUNCEMENT_HORIZONTAL_PADDING * 2 } else { 0 };
+            for (index, part) in wrap_words(item, width.saturating_sub(2 + card_padding)).into_iter().enumerate() {
+                let marker = match (announcement, index) {
+                    (true, 0) => "  • ",
+                    (true, _) => "    ",
+                    (false, 0) => "• ",
+                    (false, _) => "  ",
+                };
+                lines.push(changelog_text_line(marker, Style::default().fg(marker_color), part, Style::default().fg(theme.dialog.text), theme.content.link, announcement));
+            }
+        } else if line.is_empty() {
+            if lines.last().is_some_and(|line| !line.line.spans.is_empty()) {
+                lines.push(ChangelogLine { line: Line::from(""), announcement, link: None });
+            }
+        } else {
+            let (prefix, text_width) = if announcement { ("  ", width.saturating_sub(ANNOUNCEMENT_HORIZONTAL_PADDING * 2)) } else { ("", width) };
+            lines.extend(wrap_words(line, text_width).into_iter().map(|part| changelog_text_line(prefix, Style::default(), part, Style::default().fg(theme.dialog.text), theme.content.link, announcement)));
+        }
+    }
+    while lines.last().is_some_and(|line| line.line.spans.is_empty()) {
+        lines.pop();
+    }
+    lines
+}
+
+pub struct ChangelogDialogRender {
+    pub scroll: usize,
+    pub links: Vec<(Rect, String)>,
+}
+
+pub fn render_changelog_dialog(f: &mut Frame, app: &App) -> ChangelogDialogRender {
+    let area = f.area();
+    let theme = &app.state.theme;
+    let dialog_width = 76.min(area.width.saturating_sub(4));
+    let dialog_height = 22.min(area.height.saturating_sub(4));
+    let dialog_area = Rect { x: (area.width.saturating_sub(dialog_width)) / 2, y: (area.height.saturating_sub(dialog_height)) / 2, width: dialog_width, height: dialog_height };
+    f.render_widget(Clear, dialog_area);
+    let title = format!(" What's new in Ekphos v{} ", env!("CARGO_PKG_VERSION"));
+    let block = Block::default().title(title).borders(Borders::ALL).border_style(Style::default().fg(theme.dialog.border)).style(Style::default().bg(theme.dialog.background));
+    let inner = block.inner(dialog_area);
+    f.render_widget(block, dialog_area);
+    let padded = inner.inner(Margin { horizontal: 2, vertical: 1 });
+    let sections = Layout::default().direction(Direction::Vertical).constraints([Constraint::Min(0), Constraint::Length(1), Constraint::Length(3)]).split(padded);
+    let notes = release_notes(CHANGELOG, env!("CARGO_PKG_VERSION")).or_else(|| release_notes(CHANGELOG, "Unreleased")).unwrap_or("No summary is available for this version.");
+    let lines = changelog_lines(notes, theme, sections[0].width);
+    let max_scroll = lines.len().saturating_sub(sections[0].height as usize);
+    let scroll = app.state.changelog_scroll.min(max_scroll);
+    let mut links = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let visible_row = index.checked_sub(scroll).filter(|row| *row < sections[0].height as usize);
+        if line.announcement {
+            if let Some(row) = visible_row {
+                let highlight_area = Rect::new(sections[0].x, sections[0].y + row as u16, sections[0].width, 1);
+                f.render_widget(Block::default().style(Style::default().bg(theme.flat.surface_raised)), highlight_area);
+            }
+        }
+        if let Some((start, width, url)) = &line.link {
+            let link_area = visible_row.map_or_else(Rect::default, |row| {
+                let x = sections[0].x.saturating_add((*start).min(u16::MAX as usize) as u16);
+                Rect::new(x, sections[0].y + row as u16, (*width).min(sections[0].right().saturating_sub(x) as usize) as u16, 1)
+            });
+            links.push((link_area, url.clone()));
+        }
+    }
+    f.render_widget(Paragraph::new(lines.into_iter().map(|line| line.line).collect::<Vec<_>>()).scroll((scroll.min(u16::MAX as usize) as u16, 0)), sections[0]);
+    let reopen_key = app.state.keymap.binding_label(AppCommand::ShowChangelog);
+    let reopen_hint = if reopen_key == "Unbound" { "Remap show_changelog to reopen".to_string() } else { format!("{reopen_key} Reopen") };
+    let footer = vec![
+        Line::from(Span::styled("o Open Discord · Click the underlined link", Style::default().fg(theme.muted))),
+        Line::from(Span::styled("↑/↓ or j/k Scroll · PgUp/PgDn Page", Style::default().fg(theme.muted))),
+        Line::from(Span::styled(format!("Enter / Esc / q Close · {reopen_hint}"), Style::default().fg(theme.muted))),
+    ];
+    f.render_widget(Paragraph::new(footer).alignment(Alignment::Center), sections[2]);
+    ChangelogDialogRender { scroll, links }
 }
 
 pub fn render_onboarding_dialog(f: &mut Frame, app: &App) {
@@ -633,5 +792,21 @@ mod tests {
         listed.sort_unstable();
         expected.sort_unstable();
         assert_eq!(listed, expected, "help sections must contain every registered app command exactly once");
+    }
+
+    #[test]
+    fn current_release_keeps_an_optional_announcement_before_the_summary() {
+        let notes = release_notes(CHANGELOG, env!("CARGO_PKG_VERSION")).expect("current version must have release notes");
+        let announcement = notes.find("### Announcement").expect("current release should exercise announcement rendering");
+        let summary = notes.find("### Summary").expect("current release needs a concise summary");
+        assert!(announcement < summary);
+        assert_eq!(notes.lines().filter(|line| line.starts_with("- ")).count(), 4);
+    }
+
+    #[test]
+    fn changelog_copy_wraps_to_the_available_width() {
+        let wrapped = wrap_words("A concise release summary for narrow terminals", 16);
+        assert!(wrapped.len() > 1);
+        assert!(wrapped.iter().all(|line| unicode_width::UnicodeWidthStr::width(line.as_str()) <= 16));
     }
 }

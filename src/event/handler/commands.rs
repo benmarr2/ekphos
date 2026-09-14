@@ -356,6 +356,7 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
             }
         }
         AppCommand::ShowHelp => app.state.dialog = DialogState::Help,
+        AppCommand::ShowChangelog => app.open_changelog(),
         AppCommand::SidebarSearch => app.activate_sidebar_search(),
         AppCommand::CycleSort => app.cycle_sort_mode(),
         AppCommand::ToggleEditorMode => {

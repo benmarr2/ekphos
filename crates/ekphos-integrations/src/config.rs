@@ -67,6 +67,8 @@ pub struct GeneralConfig {
     pub show_tags: bool,
     #[serde(default = "default_check_updates")]
     pub check_updates: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seen_changelog_version: Option<String>,
     #[serde(default = "default_transparent_bg")]
     pub transparent_bg: bool,
     #[serde(default = "default_floating_cursor")]
@@ -259,6 +261,7 @@ impl Default for GeneralConfig {
             frontmatter_hidden: default_frontmatter_hidden(),
             show_tags: default_show_tags(),
             check_updates: default_check_updates(),
+            last_seen_changelog_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             transparent_bg: default_transparent_bg(),
             floating_cursor: default_floating_cursor(),
             style: StyleMode::default(),
@@ -1142,6 +1145,14 @@ mod tests {
         assert_eq!(config.notes_dir, "/tmp/notes");
         assert!(!config.check_updates);
         assert_eq!(config.journal_dir, "Journal");
+    }
+    #[test]
+    fn changelog_marker_distinguishes_new_and_existing_configs() {
+        assert_eq!(Config::default().last_seen_changelog_version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+        let existing: Config = toml::from_str("[general]\nnotes_dir = '/tmp/notes'\n").unwrap();
+        assert_eq!(existing.last_seen_changelog_version, None);
+        let seen: Config = toml::from_str("[general]\nlast_seen_changelog_version = '0.25.0'\n").unwrap();
+        assert_eq!(seen.last_seen_changelog_version.as_deref(), Some("0.25.0"));
     }
     #[test]
     fn partial_keybinding_table_keeps_other_command_defaults() {
