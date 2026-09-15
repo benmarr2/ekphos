@@ -805,7 +805,7 @@ mod tests {
 
     #[test]
     fn release_notes_keep_an_optional_announcement_before_the_summary() {
-        let notes = release_notes(CHANGELOG, "0.50.0").expect("fixture release must have notes");
+        let notes = release_notes(CHANGELOG, "0.50.10").expect("fixture release must have notes");
         let announcement = notes.find("### Announcement").expect("current release should exercise announcement rendering");
         let summary = notes.find("### Summary").expect("current release needs a concise summary");
         assert!(announcement < summary);

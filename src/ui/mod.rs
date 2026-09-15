@@ -652,7 +652,7 @@ mod tests {
     fn changelog_modal_renders_announcement_before_summary() {
         let mut fixture = GoldenApp::new();
         fixture.app.open_changelog();
-        let buffer = draw_changelog(&mut fixture, "0.50.0", 80, 24);
+        let buffer = draw_changelog(&mut fixture, "0.50.10", 80, 24);
         let content = (0..24).map(|y| row_text(&buffer, y)).collect::<String>();
         assert!(content.contains("What's new in Ekphos"), "{content}");
         let announcement = content.find("Announcement").expect("announcement heading");
