@@ -600,3 +600,109 @@ fn handle_task_view_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) {
 fn contains(rect: Rect, column: u16, row: u16) -> bool {
     column >= rect.x && column < rect.x.saturating_add(rect.width) && row >= rect.y && row < rect.y.saturating_add(rect.height)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::AppDependencies;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+
+    struct SidebarApp {
+        app: App,
+        root: PathBuf,
+    }
+
+    impl SidebarApp {
+        fn new() -> Self {
+            let id = NEXT_ROOT.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir().join(format!("ekphos-sidebar-mouse-{}-{id}", std::process::id()));
+            let vault = root.join("vault");
+            fs::create_dir_all(&vault).unwrap();
+            let alpha_path = vault.join("Alpha.md");
+            fs::write(&alpha_path, "# Alpha\n\nAlpha body").unwrap();
+            fs::write(vault.join("Beta.md"), "# Beta\n\nBeta body").unwrap();
+            let config = Config { general: crate::config::GeneralConfig { welcome_shown: false, check_updates: false, ..Default::default() }, ..Default::default() };
+            let dependencies = AppDependencies::headless(root.join("config"), root.join("cache"));
+            let mut app = App::new_injected(config, vault, None, dependencies);
+            app.state.show_welcome = false;
+            app.state.show_changelog = false;
+            app.state.dialog = DialogState::None;
+            app.state.sidebar_area = Rect::new(0, 0, 30, 20);
+            app.state.content_area = Rect::new(30, 0, 50, 20);
+            assert!(app.select_note_by_path(&alpha_path));
+            Self { app, root }
+        }
+
+        fn beta_sidebar_index(&self) -> usize {
+            self.app
+                .vault
+                .sidebar_items
+                .iter()
+                .position(|item| match item.kind {
+                    SidebarItemKind::Note { note_id } => self.app.vault.notes.iter().any(|note| note.id == note_id && note.title == "Beta"),
+                    SidebarItemKind::Folder(_) => false,
+                })
+                .unwrap()
+        }
+
+        fn beta_click(&self, kind: MouseEventKind) -> crossterm::event::MouseEvent {
+            crossterm::event::MouseEvent { kind, column: 1, row: self.beta_sidebar_index() as u16 + 1, modifiers: KeyModifiers::NONE }
+        }
+    }
+
+    impl Drop for SidebarApp {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn double_clicking_a_sidebar_note_opens_it_in_content() {
+        let mut fixture = SidebarApp::new();
+        let down = fixture.beta_click(MouseEventKind::Down(MouseButton::Left));
+        let up = fixture.beta_click(MouseEventKind::Up(MouseButton::Left));
+
+        handle_mouse_event(&mut fixture.app, down);
+        handle_mouse_event(&mut fixture.app, up);
+        handle_mouse_event(&mut fixture.app, down);
+
+        assert_eq!(fixture.app.current_note().map(|note| note.title.as_str()), Some("Beta"));
+        assert_eq!(fixture.app.current_body(), Some("# Beta\n\nBeta body"));
+        assert_eq!(fixture.app.state.focus, Focus::Content);
+    }
+
+    #[test]
+    fn enter_opens_highlighted_sidebar_note_when_document_selection_is_stale() {
+        let mut fixture = SidebarApp::new();
+        let beta_index = fixture.beta_sidebar_index();
+        fixture.app.vault.selected_sidebar_index = beta_index;
+        fixture.app.state.focus = Focus::Sidebar;
+        assert_eq!(fixture.app.current_note().map(|note| note.title.as_str()), Some("Alpha"));
+
+        let should_quit = handle_normal_mode(&mut fixture.app, crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(!should_quit);
+        assert_eq!(fixture.app.current_note().map(|note| note.title.as_str()), Some("Beta"));
+        assert_eq!(fixture.app.current_body(), Some("# Beta\n\nBeta body"));
+        assert_eq!(fixture.app.state.focus, Focus::Content);
+    }
+
+    #[test]
+    fn failed_sidebar_note_activation_keeps_keyboard_focus_in_sidebar() {
+        let mut fixture = SidebarApp::new();
+        let beta_index = fixture.beta_sidebar_index();
+        let beta_path = fixture.app.vault.notes.iter().find(|note| note.title == "Beta").and_then(|note| note.file_path.clone()).unwrap();
+        fs::remove_file(beta_path).unwrap();
+        fixture.app.vault.selected_sidebar_index = beta_index;
+        fixture.app.state.focus = Focus::Sidebar;
+
+        execute_app_command(&mut fixture.app, AppCommand::Activate);
+
+        assert_eq!(fixture.app.current_note().map(|note| note.title.as_str()), Some("Alpha"));
+        assert_eq!(fixture.app.state.focus, Focus::Sidebar);
+    }
+}

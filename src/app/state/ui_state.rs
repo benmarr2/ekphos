@@ -68,8 +68,9 @@ impl App {
             if is_folder {
                 self.toggle_folder(path);
             } else if let Some(note_index) = note_index {
-                self.toggle_focus(false);
-                self.push_navigation_history(note_index);
+                if self.navigate_to_note(note_index) {
+                    self.state.focus = Focus::Content;
+                }
             }
         }
     }
