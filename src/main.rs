@@ -145,54 +145,48 @@ fn print_help() {
     println!("    ekphos ./board.canvas    Open a JSON Canvas");
     println!("    ekphos .                 Open current directory as notes folder");
 }
-fn reset_config_and_themes() {
+fn reset_config_and_themes() -> io::Result<()> {
     let config_path = config::Config::config_path();
     let themes_dir = config::Config::themes_dir();
     println!("Resetting ekphos configuration...");
     println!();
-    if config_path.exists() {
-        match fs::remove_file(&config_path) {
-            Ok(_) => println!("  Deleted: {}", config_path.display()),
-            Err(e) => eprintln!("  Failed to remove config: {}", e),
-        }
+    if config_path.try_exists().map_err(|error| io::Error::new(error.kind(), format!("failed to inspect config {}: {error}", config_path.display())))? {
+        fs::remove_file(&config_path).map_err(|error| io::Error::new(error.kind(), format!("failed to remove config {}: {error}", config_path.display())))?;
+        println!("  Deleted: {}", config_path.display());
     } else {
         println!("  Config file not found (skipped)");
     }
-    if themes_dir.exists() {
-        match fs::remove_dir_all(&themes_dir) {
-            Ok(_) => println!("  Deleted: {}", themes_dir.display()),
-            Err(e) => eprintln!("  Failed to remove themes: {}", e),
-        }
+    if themes_dir.try_exists().map_err(|error| io::Error::new(error.kind(), format!("failed to inspect themes directory {}: {error}", themes_dir.display())))? {
+        fs::remove_dir_all(&themes_dir).map_err(|error| io::Error::new(error.kind(), format!("failed to remove themes {}: {error}", themes_dir.display())))?;
+        println!("  Deleted: {}", themes_dir.display());
     } else {
         println!("  Themes directory not found (skipped)");
     }
     println!();
     println!("Generating fresh defaults...");
     println!();
-    let _config = config::Config::load_or_create();
+    config::Config::write_defaults()?;
     println!("  Created: {}", config_path.display());
     println!("  Created: {}", themes_dir.join("ekphos-dawn.toml").display());
     println!();
     println!("Reset complete! Configuration restored to v{} defaults.", VERSION);
+    Ok(())
 }
-fn clean_cache() {
+fn clean_cache() -> io::Result<()> {
     let cache_dir = env::var_os("EKPHOS_CACHE_DIR").filter(|path| !path.is_empty()).map(PathBuf::from).unwrap_or_else(|| dirs::cache_dir().unwrap_or_else(|| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".cache")).join("ekphos"));
     println!("Cleaning ekphos search cache...");
     println!();
-    if cache_dir.exists() {
+    if cache_dir.try_exists().map_err(|error| io::Error::new(error.kind(), format!("failed to inspect cache directory {}: {error}", cache_dir.display())))? {
         let total_size = get_dir_size(&cache_dir);
-        match fs::remove_dir_all(&cache_dir) {
-            Ok(_) => {
-                let size_str = format_size(total_size);
-                println!("  Deleted: {} ({})", cache_dir.display(), size_str);
-            }
-            Err(e) => eprintln!("  Failed to remove cache: {}", e),
-        }
+        fs::remove_dir_all(&cache_dir).map_err(|error| io::Error::new(error.kind(), format!("failed to remove cache {}: {error}", cache_dir.display())))?;
+        let size_str = format_size(total_size);
+        println!("  Deleted: {} ({})", cache_dir.display(), size_str);
     } else {
         println!("  Cache directory not found (skipped)");
     }
     println!();
     println!("Cache cleared! Search index will be rebuilt on next launch.");
+    Ok(())
 }
 fn get_dir_size(path: &PathBuf) -> u64 {
     let mut total = 0;
@@ -286,12 +280,10 @@ fn main() -> io::Result<()> {
                 return Ok(());
             }
             "--reset" => {
-                reset_config_and_themes();
-                return Ok(());
+                return reset_config_and_themes();
             }
             "--clean-cache" => {
-                clean_cache();
-                return Ok(());
+                return clean_cache();
             }
             arg if arg.starts_with('-') => {
                 eprintln!("Unknown option: {}", arg);

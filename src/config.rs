@@ -377,6 +377,19 @@ impl Config {
         }
         Self::load()
     }
+    pub fn write_defaults() -> std::io::Result<()> {
+        Self::write_defaults_to_dir(&Self::config_dir())
+    }
+    pub fn write_defaults_to_dir(config_dir: &Path) -> std::io::Result<()> {
+        let config_path = Self::config_path_in(config_dir);
+        let themes_dir = Self::themes_dir_in(config_dir);
+        let default_theme_path = themes_dir.join("ekphos-dawn.toml");
+        fs::create_dir_all(&themes_dir).map_err(|error| std::io::Error::new(error.kind(), format!("failed to create themes directory {}: {error}", themes_dir.display())))?;
+        let default_config = toml::to_string_pretty(&Self::default()).map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        fs::write(&config_path, default_config).map_err(|error| std::io::Error::new(error.kind(), format!("failed to write default config {}: {error}", config_path.display())))?;
+        fs::write(&default_theme_path, include_str!("../themes/ekphos-dawn.toml")).map_err(|error| std::io::Error::new(error.kind(), format!("failed to write default theme {}: {error}", default_theme_path.display())))?;
+        Ok(())
+    }
     pub fn config_path() -> PathBuf {
         Self::config_dir().join("config.toml")
     }
