@@ -81,7 +81,7 @@ pub enum Mode {
 pub enum DialogState {
     None,
     Onboarding,
-    CreateNote,
+    CreateDocument(crate::vault::VaultFileKind),
     CreateFolder,
     CreateNoteInFolder,
     DeleteConfirm,

@@ -41,9 +41,9 @@ pub(super) fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent) -
             handle_onboarding_dialog(app, key);
             return Ok(false);
         }
-        DialogState::CreateNote => {
+        DialogState::CreateDocument(kind) => {
             app.state.keymap.reset_pending();
-            handle_create_note_dialog(app, key);
+            handle_create_document_dialog(app, key, kind);
             return Ok(false);
         }
         DialogState::CreateFolder => {
@@ -193,15 +193,30 @@ pub(super) fn handle_onboarding_dialog(app: &mut App, key: crossterm::event::Key
     }
 }
 
-pub(super) fn handle_create_note_dialog(app: &mut App, key: crossterm::event::KeyEvent) {
+fn cycle_document_kind(kind: crate::vault::VaultFileKind, backwards: bool) -> crate::vault::VaultFileKind {
+    use crate::vault::VaultFileKind::{Base, Canvas, Markdown};
+    match (kind, backwards) {
+        (Markdown, false) | (Base, true) => Canvas,
+        (Canvas, false) | (Markdown, true) => Base,
+        (Base, false) | (Canvas, true) => Markdown,
+    }
+}
+
+pub(super) fn handle_create_document_dialog(app: &mut App, key: crossterm::event::KeyEvent, kind: crate::vault::VaultFileKind) {
+    if matches!(key.code, KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right) {
+        let backwards = matches!(key.code, KeyCode::BackTab | KeyCode::Left) || (key.code == KeyCode::Tab && key.modifiers.contains(crossterm::event::KeyModifiers::SHIFT));
+        app.state.dialog = DialogState::CreateDocument(cycle_document_kind(kind, backwards));
+        app.state.dialog_error = None;
+        return;
+    }
     match apply_text_dialog_key(&mut app.state.input_buffer, &mut app.state.dialog_error, key, true) {
         DialogCommand::Submit => {
             let name = app.state.input_buffer.trim().to_string();
             if name.is_empty() {
-                app.state.dialog_error = Some("Note name cannot be empty".to_string());
+                app.state.dialog_error = Some("Document name cannot be empty".to_string());
                 return;
             }
-            if app.create_note(&name) {
+            if app.create_document(&name, kind) {
                 app.state.input_buffer.clear();
                 app.state.dialog_error = None;
                 app.state.dialog = DialogState::None;
@@ -602,7 +617,7 @@ pub(super) fn handle_empty_directory_dialog(app: &mut App, key: crossterm::event
         KeyCode::Char('n') => {
             app.state.dialog = DialogState::None;
             app.state.input_buffer.clear();
-            app.state.dialog = DialogState::CreateNote;
+            app.state.dialog = DialogState::CreateDocument(crate::vault::VaultFileKind::Markdown);
         }
         _ => {}
     }
@@ -727,6 +742,17 @@ mod tests {
     }
 
     #[test]
+    fn document_kind_cycle_visits_every_creatable_type_in_both_directions() {
+        use crate::vault::VaultFileKind::{Base, Canvas, Markdown};
+        assert_eq!(cycle_document_kind(Markdown, false), Canvas);
+        assert_eq!(cycle_document_kind(Canvas, false), Base);
+        assert_eq!(cycle_document_kind(Base, false), Markdown);
+        assert_eq!(cycle_document_kind(Markdown, true), Base);
+        assert_eq!(cycle_document_kind(Base, true), Canvas);
+        assert_eq!(cycle_document_kind(Canvas, true), Markdown);
+    }
+
+    #[test]
     fn text_dialog_commands_preserve_existing_key_behavior() {
         let mut input = String::from("ab");
         let mut error = Some(String::from("invalid"));
@@ -764,6 +790,22 @@ mod tests {
             std::thread::yield_now();
         }
         (app, vault)
+    }
+
+    #[test]
+    fn new_document_dialog_cycles_type_and_creates_the_selected_document() {
+        let (mut app, vault) = task_view_app();
+        app.state.dialog = DialogState::CreateDocument(crate::vault::VaultFileKind::Markdown);
+        app.state.input_buffer.clear();
+
+        handle_create_document_dialog(&mut app, key(KeyCode::Tab), crate::vault::VaultFileKind::Markdown);
+        assert_eq!(app.state.dialog, DialogState::CreateDocument(crate::vault::VaultFileKind::Canvas));
+
+        app.state.input_buffer = "Roadmap".to_string();
+        handle_create_document_dialog(&mut app, key(KeyCode::Enter), crate::vault::VaultFileKind::Canvas);
+        assert_eq!(app.state.dialog, DialogState::None);
+        assert!(vault.join("Roadmap.canvas").is_file());
+        assert_eq!(app.active_document_kind(), Some(crate::vault::VaultFileKind::Canvas));
     }
 
     #[test]

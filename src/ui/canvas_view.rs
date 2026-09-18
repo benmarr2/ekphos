@@ -7,14 +7,15 @@ use ratatui::{
     layout::{Alignment, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Paragraph, Widget, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget, Wrap},
     Frame,
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::panel::{panel_surface, render_panel, PanelFrame, SurfaceKind};
-use crate::app::{App, CanvasEditorLayout, CanvasInteraction, CanvasNodeEditor, CanvasResizeHandle, Focus};
+use crate::app::{App, CanvasEditorLayout, CanvasInteraction, CanvasMenuAction, CanvasMenuTarget, CanvasNodeEditor, CanvasOverlay, CanvasResizeHandle, Focus};
 use crate::config::Theme;
+use crate::keybindings::AppCommand;
 
 const WORLD_UNITS_PER_COLUMN: f64 = 20.0;
 const WORLD_UNITS_PER_ROW: f64 = 40.0;
@@ -163,6 +164,7 @@ pub fn render_canvas_view(frame: &mut Frame, app: &mut App, area: Rect) {
     app.structured.canvas.edge_cells.clear();
     app.structured.canvas.handle_rects.clear();
     app.structured.canvas.resize_rects.clear();
+    app.structured.canvas.shortcut_toggle_rect = None;
     let theme = app.state.theme.clone();
     let focused = app.state.focus == Focus::Content;
     let note_title = app.current_note().map_or("Canvas", |note| note.title.as_str());
@@ -199,14 +201,29 @@ pub fn render_canvas_view(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     };
 
-    let footer_height = if inner.height >= 10 { 2 } else { 1 };
+    let desired_footer_height = if app.canvas_editor_active() {
+        if inner.height >= 10 {
+            2
+        } else {
+            1
+        }
+    } else if app.structured.canvas.shortcuts_expanded {
+        if inner.height >= 12 {
+            3
+        } else {
+            2
+        }
+    } else {
+        1
+    };
+    let footer_height = desired_footer_height.min(inner.height.saturating_sub(1));
     let graph_area = Rect::new(inner.x, inner.y + 1, inner.width, inner.height.saturating_sub(1 + footer_height));
     app.structured.canvas.view_area = graph_area;
     fill_rect(frame.buffer_mut(), graph_area, theme.background);
 
     let mut editor_caret = None;
     if document.nodes.is_empty() {
-        frame.render_widget(Paragraph::new("This Canvas is empty · press E to add nodes in JSON").alignment(Alignment::Center).style(Style::default().fg(theme.muted).bg(theme.background)), graph_area);
+        frame.render_widget(Paragraph::new("Double-click or right-click to add your first card · a opens the add menu").alignment(Alignment::Center).style(Style::default().fg(theme.muted).bg(theme.background)), graph_area);
     } else {
         fit_canvas_if_needed(app, &document, graph_area);
         let viewport = (app.structured.canvas.viewport_x, app.structured.canvas.viewport_y, app.structured.canvas.zoom);
@@ -299,10 +316,126 @@ pub fn render_canvas_view(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    render_top_status(frame, app, &document, Rect::new(inner.x, inner.y, inner.width, 1), &theme);
-    render_footer(frame, app, Rect::new(inner.x, inner.bottom().saturating_sub(footer_height), inner.width, footer_height), &theme);
-    if let Some(caret) = editor_caret.filter(|caret| graph_area.contains(*caret)) {
-        frame.set_cursor_position(caret);
+    if inner.height > 0 {
+        render_top_status(frame, app, &document, Rect::new(inner.x, inner.y, inner.width, 1), &theme);
+    }
+    if footer_height > 0 {
+        render_footer(frame, app, Rect::new(inner.x, inner.bottom().saturating_sub(footer_height), inner.width, footer_height), &theme);
+    }
+    render_canvas_overlay(frame, app, graph_area, &theme);
+    if !app.canvas_overlay_active() {
+        if let Some(caret) = editor_caret.filter(|caret| graph_area.contains(*caret)) {
+            frame.set_cursor_position(caret);
+        }
+    }
+}
+
+fn render_canvas_overlay(frame: &mut Frame, app: &mut App, graph_area: Rect, theme: &Theme) {
+    if graph_area.width == 0 || graph_area.height == 0 {
+        match &mut app.structured.canvas.overlay {
+            CanvasOverlay::Menu(menu) => {
+                menu.area = Rect::default();
+                menu.item_rects.clear();
+            }
+            CanvasOverlay::FilePicker(picker) => {
+                picker.area = Rect::default();
+                picker.result_rects.clear();
+            }
+            CanvasOverlay::None => {}
+        }
+        return;
+    }
+    match &app.structured.canvas.overlay {
+        CanvasOverlay::None => {}
+        CanvasOverlay::Menu(menu) => {
+            let screen_position = menu.screen_position;
+            let items = menu.items.clone();
+            let selected_index = menu.selected_index;
+            let target = menu.target;
+            let width = items.iter().map(|action| canvas_menu_label(*action, target).width() as u16).max().unwrap_or(18).saturating_add(6).max(22);
+            let height = items.len() as u16 + 2;
+            let x = screen_position.x.min(frame.area().right().saturating_sub(width));
+            let y = screen_position.y.min(frame.area().bottom().saturating_sub(height));
+            let area = Rect::new(x, y, width.min(frame.area().width), height.min(frame.area().height));
+            let item_rects = items.iter().enumerate().map(|(index, action)| (*action, Rect::new(area.x + 1, area.y + 1 + index as u16, area.width.saturating_sub(2), 1))).collect::<Vec<_>>();
+            if let CanvasOverlay::Menu(menu) = &mut app.structured.canvas.overlay {
+                menu.area = area;
+                menu.item_rects.clone_from(&item_rects);
+            }
+            frame.render_widget(Clear, area);
+            frame.render_widget(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(theme.primary)).style(Style::default().bg(theme.background_secondary)), area);
+            for (index, (action, row)) in item_rects.iter().enumerate() {
+                let selected = index == selected_index;
+                let marker = if selected { "◆" } else { " " };
+                render_overlay_row(frame, *row, format!(" {marker} {}", canvas_menu_label(*action, target)), selected, theme);
+            }
+        }
+        CanvasOverlay::FilePicker(picker) => {
+            const VISIBLE_RESULTS: usize = 10;
+            let query = picker.query.clone();
+            let results = picker.results.clone();
+            let selected_index = picker.selected_index;
+            let scroll_offset = picker.scroll_offset;
+            let width = graph_area.width.saturating_sub(4).clamp(24, 64);
+            let visible_count = results.len().clamp(1, VISIBLE_RESULTS);
+            let height = (visible_count as u16 + 4).min(graph_area.height.max(1));
+            let area = centered_rect(graph_area, width, height);
+            let results_area = Rect::new(area.x + 1, area.y + 3, area.width.saturating_sub(2), area.height.saturating_sub(4));
+            let result_rects = results.iter().enumerate().skip(scroll_offset).take(results_area.height as usize).map(|(index, _)| (index, Rect::new(results_area.x, results_area.y + (index - scroll_offset) as u16, results_area.width, 1))).collect::<Vec<_>>();
+            if let CanvasOverlay::FilePicker(picker) = &mut app.structured.canvas.overlay {
+                picker.area = area;
+                picker.result_rects.clone_from(&result_rects);
+            }
+            frame.render_widget(Clear, area);
+            let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(theme.primary)).style(Style::default().bg(theme.background_secondary)).title(" Add file card ");
+            frame.render_widget(block, area);
+            let query_area = Rect::new(area.x + 2, area.y + 1, area.width.saturating_sub(4), 1);
+            frame.render_widget(Paragraph::new(format!("Search: {query}")).style(Style::default().fg(theme.foreground).bg(theme.background_secondary)), query_area);
+            frame.render_widget(Paragraph::new("Enter add · Esc cancel").style(Style::default().fg(theme.muted).bg(theme.background_secondary)), Rect::new(area.x + 2, area.y + 2, area.width.saturating_sub(4), 1));
+            if results.is_empty() {
+                frame.render_widget(Paragraph::new("No matching vault files").style(Style::default().fg(theme.muted).bg(theme.background_secondary)), results_area);
+            } else {
+                for ((index, result), (_, row)) in results.iter().enumerate().skip(scroll_offset).take(results_area.height as usize).zip(&result_rects) {
+                    let selected = index == selected_index;
+                    let marker = if selected { "◆" } else { " " };
+                    let hint = result.folder_hint.as_deref().map(|folder| format!(" — {folder}")).unwrap_or_default();
+                    render_overlay_row(frame, *row, format!(" {marker} {}{hint}", result.display_name), selected, theme);
+                }
+            }
+            let query_width = query.width() as u16;
+            if query_area.width > 0 && query_area.height > 0 {
+                frame.set_cursor_position(Position::new((query_area.x + "Search: ".width() as u16 + query_width).min(query_area.right().saturating_sub(1)), query_area.y));
+            }
+        }
+    }
+}
+
+fn render_overlay_row(frame: &mut Frame, area: Rect, label: String, selected: bool, theme: &Theme) {
+    let style = if selected { Style::default().fg(theme.background).bg(theme.primary).add_modifier(Modifier::BOLD) } else { Style::default().fg(theme.foreground).bg(theme.background_secondary) };
+    fill_rect(frame.buffer_mut(), area, if selected { theme.primary } else { theme.background_secondary });
+    frame.render_widget(Paragraph::new(label).style(style), area);
+}
+
+fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect::new(area.x + area.width.saturating_sub(width) / 2, area.y + area.height.saturating_sub(height) / 2, width, height)
+}
+
+fn canvas_menu_label(action: CanvasMenuAction, target: CanvasMenuTarget) -> &'static str {
+    match action {
+        CanvasMenuAction::AddText => "Add text card",
+        CanvasMenuAction::AddFile => "Add file card",
+        CanvasMenuAction::AddLink => "Add link card",
+        CanvasMenuAction::AddGroup => "Add group",
+        CanvasMenuAction::Edit => "Edit card",
+        CanvasMenuAction::RenameGroup => "Rename group",
+        CanvasMenuAction::Open => "Open linked item",
+        CanvasMenuAction::Duplicate => "Duplicate card",
+        CanvasMenuAction::Connect => "Connect card",
+        CanvasMenuAction::Delete if matches!(target, CanvasMenuTarget::Edge(_)) => "Delete connection",
+        CanvasMenuAction::Delete => "Delete card",
+        CanvasMenuAction::Fit => "Fit Canvas to view",
     }
 }
 
@@ -351,9 +484,10 @@ fn render_top_status(frame: &mut Frame, app: &App, document: &crate::canvas::Can
     frame.render_widget(Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.background)), area);
 }
 
-fn render_footer(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
+fn render_footer(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
+    app.structured.canvas.shortcut_toggle_rect = None;
     if let Some(editor) = app.structured.canvas.editor.as_ref() {
-        let save_key = if editor.field.multiline() { "Ctrl+Enter" } else { "Enter" };
+        let save_key = if editor.field.multiline() { "Ctrl+S" } else { "Enter" };
         let first = Line::from(vec![key(save_key, theme), hint(" save  ", theme), key("Esc", theme), hint(" cancel  ", theme), key("Arrows", theme), hint(" move caret  ", theme), key("Home/End", theme), hint(" row", theme)]);
         frame.render_widget(Paragraph::new(first).style(Style::default().bg(theme.background)), Rect::new(area.x, area.y, area.width, 1));
         if area.height > 1 {
@@ -366,68 +500,80 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         }
         return;
     }
+    let expanded = app.structured.canvas.shortcuts_expanded;
+    let toggle_key = app.state.keymap.binding_label(AppCommand::ToggleCanvasShortcuts);
+    let toggle_text = if expanded { format!("{toggle_key} hide ▲") } else { format!("{toggle_key} shortcuts ▼") };
+    let toggle_width = (toggle_text.width() as u16 + 2).min(area.width);
+    let toggle_area = Rect::new(area.right().saturating_sub(toggle_width), area.y, toggle_width, 1);
+    app.structured.canvas.shortcut_toggle_rect = Some(toggle_area);
+    let toggle_style = if app.structured.canvas.shortcut_toggle_hovered { Style::default().fg(theme.background).bg(theme.primary).add_modifier(Modifier::BOLD) } else { Style::default().fg(theme.warning).bg(theme.background).add_modifier(Modifier::BOLD) };
+    frame.render_widget(Paragraph::new(format!(" {toggle_text} ")).alignment(Alignment::Right).style(toggle_style), toggle_area);
+
+    let summary_area = Rect::new(area.x, area.y, area.width.saturating_sub(toggle_width.saturating_add(1)), 1);
     let connecting = matches!(app.structured.canvas.interaction, CanvasInteraction::Connecting { .. });
-    let first = if connecting {
+    let summary = if connecting {
         Line::from(vec![key("Enter", theme), hint(" attach  ", theme), key("Esc", theme), hint(" cancel  ", theme), key("Arrows/HJKL", theme), hint(" choose target", theme)])
-    } else if area.width < 72 {
-        Line::from(vec![key("Arrows", theme), hint(" select  ", theme), key("+/−", theme), hint(" zoom  ", theme), key("f", theme), hint(" fit  ", theme), key("Enter", theme), hint(" edit/open  ", theme), key("[ ]", theme), hint(" edge", theme)])
+    } else if summary_area.width < 45 {
+        Line::from(vec![key("a", theme), hint(" add  ", theme), key("Right-click", theme), hint(" menu", theme)])
     } else {
-        Line::from(vec![key("Arrows/HJKL", theme), hint(" select  ", theme), key("Shift+arrows", theme), hint(" pan  ", theme), key("+/−", theme), hint(" zoom  ", theme), key("f", theme), hint(" fit  ", theme), key("Enter", theme), hint(" edit/open", theme)])
+        Line::from(vec![key("a", theme), hint(" add  ", theme), key("Right-click", theme), hint(" actions  ", theme), key("Drag", theme), hint(" move/pan  ", theme), key("Scroll", theme), hint(" zoom", theme)])
     };
-    frame.render_widget(Paragraph::new(first).style(Style::default().bg(theme.background)), Rect::new(area.x, area.y, area.width, 1));
-    if area.height > 1 {
-        let second = if area.width < 72 {
-            Line::from(vec![key("Drag", theme), hint(" move  ", theme), key("◇", theme), hint(" resize  ", theme), key("●", theme), hint(" link  ", theme), key("e", theme), hint(" edit  ", theme), key("E", theme), hint(" source", theme)])
-        } else if area.width < 100 {
-            Line::from(vec![
-                key("Drag", theme),
-                hint(" move/pan  ", theme),
-                key("◇", theme),
-                hint(" resize  ", theme),
-                key("●", theme),
-                hint(" connect  ", theme),
-                key("c", theme),
-                hint(" connect  ", theme),
-                key("[ ]", theme),
-                hint(" edges  ", theme),
-                key("Del", theme),
-                hint(" detach  ", theme),
-                key("e", theme),
-                hint(" edit  ", theme),
-                key("E", theme),
-                hint(" source", theme),
-            ])
-        } else {
-            Line::from(vec![
-                key("Drag", theme),
-                hint(" move/pan  ", theme),
-                key("◇ drag", theme),
-                hint(" resize  ", theme),
-                key("● drag", theme),
-                hint(" connect  ", theme),
-                key("[ ]", theme),
-                hint(" connections  ", theme),
-                key("Del", theme),
-                hint(" detach  ", theme),
-                key("e", theme),
-                hint(" edit  ", theme),
-                key("o", theme),
-                hint(" open  ", theme),
-                key("E", theme),
-                hint(" source  ", theme),
-                key("Alt", theme),
-                hint(" move  ", theme),
-                key("Alt+Shift", theme),
-                hint(" resize  ", theme),
-                key("Ctrl+Z", theme),
-                hint(" undo", theme),
-            ])
-        };
-        frame.render_widget(Paragraph::new(second).style(Style::default().bg(theme.background)), Rect::new(area.x, area.y + 1, area.width, 1));
+    frame.render_widget(Paragraph::new(summary).style(Style::default().bg(theme.background)), summary_area);
+    if !expanded || area.height <= 1 {
+        return;
+    }
+
+    let horizontal_keys = format!("{}/{}", app.state.keymap.binding_label(AppCommand::CanvasSelectLeft), app.state.keymap.binding_label(AppCommand::CanvasSelectRight));
+    let zoom_keys = format!("{}/{}", app.state.keymap.binding_label(AppCommand::CanvasZoomIn), app.state.keymap.binding_label(AppCommand::CanvasZoomOut));
+    let navigation = if area.width < 86 {
+        Line::from(vec![key("j/k/↑/↓", theme), hint(" vertical  ", theme), owned_key(horizontal_keys, theme), hint(" horizontal  ", theme), owned_key(zoom_keys, theme), hint(" zoom  ", theme), key("f", theme), hint(" fit", theme)])
+    } else {
+        Line::from(vec![
+            key("j/k/↑/↓", theme),
+            hint(" vertical  ", theme),
+            owned_key(horizontal_keys, theme),
+            hint(" horizontal  ", theme),
+            key("Shift+arrows", theme),
+            hint(" pan  ", theme),
+            owned_key(zoom_keys, theme),
+            hint(" zoom  ", theme),
+            key("f", theme),
+            hint(" fit  ", theme),
+            key("Enter/Space", theme),
+            hint(" edit/open  ", theme),
+            key("Shift+F10", theme),
+            hint(" menu", theme),
+        ])
+    };
+    frame.render_widget(Paragraph::new(navigation).style(Style::default().bg(theme.background)), Rect::new(area.x, area.y + 1, area.width, 1));
+    if area.height > 2 {
+        let undo_key = app.state.keymap.binding_label(AppCommand::CanvasUndo);
+        let redo_key = app.state.keymap.binding_label(AppCommand::CanvasRedo);
+        let actions = Line::from(vec![
+            key("◇ drag", theme),
+            hint(" resize  ", theme),
+            key("● drag/c", theme),
+            hint(" connect  ", theme),
+            key("[ ]", theme),
+            hint(" connections  ", theme),
+            key("Del", theme),
+            hint(" delete  ", theme),
+            owned_key(undo_key, theme),
+            hint(" undo  ", theme),
+            owned_key(redo_key, theme),
+            hint(" redo  ", theme),
+            key("E", theme),
+            hint(" source", theme),
+        ]);
+        frame.render_widget(Paragraph::new(actions).style(Style::default().bg(theme.background)), Rect::new(area.x, area.y + 2, area.width, 1));
     }
 }
 
 fn key(text: &'static str, theme: &Theme) -> Span<'static> {
+    Span::styled(text, Style::default().fg(theme.warning).add_modifier(Modifier::BOLD))
+}
+
+fn owned_key(text: String, theme: &Theme) -> Span<'static> {
     Span::styled(text, Style::default().fg(theme.warning).add_modifier(Modifier::BOLD))
 }
 
@@ -996,6 +1142,9 @@ mod tests {
             let vault = root.join("vault");
             fs::create_dir_all(&vault).unwrap();
             fs::write(vault.join("Aurora.md"), "# Aurora").unwrap();
+            for index in 0..12 {
+                fs::write(vault.join(format!("Note-{index:02}.md")), format!("# Note {index:02}")).unwrap();
+            }
             fs::write(
                 vault.join("Board.canvas"),
                 r##"{
@@ -1101,7 +1250,7 @@ mod tests {
                 }
             }
             if width >= 60 {
-                assert!(symbols.contains("source"), "source-edit action was clipped at {width}x{height}");
+                assert!(symbols.contains("shortcuts"), "shortcut toggle was clipped at {width}x{height}");
             }
             assert!(!fixture.app.structured.canvas.node_rects.is_empty());
             assert_eq!(fixture.app.structured.canvas.handle_rects.len(), 4);
@@ -1113,6 +1262,61 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn canvas_overlays_and_expanded_footer_survive_tiny_viewports() {
+        for (width, height) in [(1, 1), (2, 2), (8, 3), (16, 5)] {
+            let mut fixture = CanvasFixture::new();
+            fixture.app.structured.canvas.shortcuts_expanded = true;
+            fixture.app.structured.canvas.overlay = CanvasOverlay::Menu(crate::app::CanvasMenuState {
+                screen_position: Position::new(0, 0),
+                world_position: (0, 0),
+                target: CanvasMenuTarget::Background,
+                items: vec![CanvasMenuAction::AddText, CanvasMenuAction::AddFile],
+                selected_index: 0,
+                area: Rect::default(),
+                item_rects: Vec::new(),
+            });
+            fixture.draw(width, height);
+            assert!(fixture.app.structured.canvas.view_area.height <= height);
+
+            fixture.app.structured.canvas.overlay = CanvasOverlay::FilePicker(crate::app::CanvasFilePickerState { world_position: (0, 0), query: String::new(), results: Vec::new(), selected_index: 0, scroll_offset: 0, area: Rect::default(), result_rects: Vec::new(), last_click: None });
+            fixture.draw(width, height);
+        }
+    }
+
+    #[test]
+    fn canvas_footer_starts_compact_and_expands_on_demand() {
+        let mut fixture = CanvasFixture::new();
+        let compact = fixture.draw(100, 30);
+        let compact_symbols = compact.content.iter().map(|cell| cell.symbol()).collect::<String>();
+        assert!(compact_symbols.contains("shortcuts"));
+        assert!(!compact_symbols.contains("Shift+arrows"));
+        assert!(fixture.app.structured.canvas.shortcut_toggle_rect.is_some());
+
+        fixture.app.canvas_toggle_shortcuts();
+        let expanded = fixture.draw(100, 30);
+        let expanded_symbols = expanded.content.iter().map(|cell| cell.symbol()).collect::<String>();
+        assert!(expanded_symbols.contains("hide"));
+        assert!(expanded_symbols.contains("Shift+arrows"));
+        assert!(expanded_symbols.contains("Ctrl+r"));
+        assert!(expanded_symbols.contains("source"));
+    }
+
+    #[test]
+    fn canvas_editor_footer_matches_save_and_newline_controls() {
+        let mut fixture = CanvasFixture::new();
+        fixture.draw(100, 30);
+        fixture.app.canvas_select_node(1);
+        assert!(fixture.app.canvas_begin_node_edit());
+        assert_eq!(fixture.app.state.status_message.as_deref(), Some("Editing card · Ctrl+S saves · Esc cancels"));
+
+        let buffer = fixture.draw(100, 30);
+        let symbols = buffer.content.iter().map(|cell| cell.symbol()).collect::<String>();
+        assert!(symbols.contains("Ctrl+S save"));
+        assert!(symbols.contains("Enter new line"));
+        assert!(!symbols.contains("Ctrl+Enter"));
     }
 
     #[test]
@@ -1135,6 +1339,66 @@ mod tests {
         assert!(fixture.app.structured.canvas.handle_rects.is_empty());
         assert_eq!(fixture.app.structured.canvas.resize_rects.len(), 8);
         assert!(fixture.app.structured.canvas.editor.is_some());
+    }
+
+    #[test]
+    fn canvas_context_menu_and_file_picker_render_mouse_hit_targets() {
+        let mut fixture = CanvasFixture::new();
+        fixture.draw(100, 30);
+        let view_area = fixture.app.structured.canvas.view_area;
+        let pointer = Position::new(view_area.x + view_area.width / 2, view_area.y + view_area.height / 2);
+        assert!(fixture.app.canvas_open_context_menu(pointer, CanvasMenuTarget::Background));
+        if let CanvasOverlay::Menu(menu) = &mut fixture.app.structured.canvas.overlay {
+            menu.selected_index = menu.items.len().saturating_sub(1);
+        }
+
+        let menu_buffer = fixture.draw(100, 30);
+        let symbols = menu_buffer.content.iter().map(|cell| cell.symbol()).collect::<String>();
+        assert!(symbols.contains("Add text card"));
+        assert!(symbols.contains("Add file card"));
+        let CanvasOverlay::Menu(menu) = &fixture.app.structured.canvas.overlay else {
+            panic!("Canvas menu should remain open");
+        };
+        assert_eq!(menu.item_rects.len(), menu.items.len());
+        assert!(menu.item_rects.iter().all(|(_, rect)| rect.width > 0));
+        let selected_row = menu.item_rects[menu.selected_index].1;
+        assert!((selected_row.x..selected_row.right()).all(|x| menu_buffer.cell((x, selected_row.y)).is_some_and(|cell| cell.bg == fixture.app.state.theme.primary)));
+        assert_eq!(menu_buffer.cell((selected_row.right() - 1, selected_row.y)).map(|cell| cell.symbol()), Some(" "));
+
+        assert!(fixture.app.canvas_execute_menu_action(CanvasMenuAction::AddFile));
+        let picker_buffer = fixture.draw(100, 30);
+        let symbols = picker_buffer.content.iter().map(|cell| cell.symbol()).collect::<String>();
+        assert!(symbols.contains("Add file card"));
+        assert!(symbols.contains("Search:"));
+        let CanvasOverlay::FilePicker(picker) = &fixture.app.structured.canvas.overlay else {
+            panic!("Canvas file picker should remain open");
+        };
+        assert!(!picker.result_rects.is_empty());
+        let selected_row = picker.result_rects.iter().find(|(index, _)| *index == picker.selected_index).map(|(_, rect)| *rect).expect("selected file row should be visible");
+        assert!((selected_row.x..selected_row.right()).all(|x| picker_buffer.cell((x, selected_row.y)).is_some_and(|cell| cell.bg == fixture.app.state.theme.primary)));
+    }
+
+    #[test]
+    fn canvas_file_picker_keeps_keyboard_selection_visible_in_short_views() {
+        let mut fixture = CanvasFixture::new();
+        fixture.draw(100, 12);
+        let view_area = fixture.app.structured.canvas.view_area;
+        assert!(fixture.app.canvas_open_context_menu(Position::new(view_area.x, view_area.y), CanvasMenuTarget::Background));
+        assert!(fixture.app.canvas_execute_menu_action(CanvasMenuAction::AddFile));
+        fixture.draw(100, 12);
+
+        let initial_height = match &fixture.app.structured.canvas.overlay {
+            CanvasOverlay::FilePicker(picker) => picker.area.height,
+            _ => panic!("file picker should be open"),
+        };
+        assert!(fixture.app.canvas_file_picker_move_page(1));
+        fixture.draw(100, 12);
+
+        let CanvasOverlay::FilePicker(picker) = &fixture.app.structured.canvas.overlay else {
+            panic!("file picker should remain open");
+        };
+        assert_eq!(picker.area.height, initial_height);
+        assert!(picker.result_rects.iter().any(|(index, _)| *index == picker.selected_index));
     }
 
     #[test]

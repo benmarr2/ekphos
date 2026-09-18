@@ -75,9 +75,67 @@ pub struct CanvasViewState {
     pub hovered_resize: Option<(CanvasResizeHandle, ratatui::layout::Position)>,
     pub interaction: CanvasInteraction,
     pub editor: Option<CanvasNodeEditor>,
+    pub overlay: CanvasOverlay,
+    pub shortcuts_expanded: bool,
+    pub shortcut_toggle_rect: Option<Rect>,
+    pub shortcut_toggle_hovered: bool,
     pub last_click: Option<(std::time::Instant, usize)>,
+    pub last_background_click: Option<(std::time::Instant, ratatui::layout::Position)>,
     pub(crate) undo: Vec<crate::canvas::Canvas>,
     pub(crate) redo: Vec<crate::canvas::Canvas>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanvasMenuTarget {
+    Background,
+    Node(usize),
+    Edge(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanvasMenuAction {
+    AddText,
+    AddFile,
+    AddLink,
+    AddGroup,
+    Edit,
+    RenameGroup,
+    Open,
+    Duplicate,
+    Connect,
+    Delete,
+    Fit,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CanvasMenuState {
+    pub screen_position: ratatui::layout::Position,
+    pub world_position: (i64, i64),
+    pub target: CanvasMenuTarget,
+    pub items: Vec<CanvasMenuAction>,
+    pub selected_index: usize,
+    pub area: Rect,
+    pub item_rects: Vec<(CanvasMenuAction, Rect)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CanvasFilePickerState {
+    pub world_position: (i64, i64),
+    pub query: String,
+    pub results: Vec<FilePickerResult>,
+    pub selected_index: usize,
+    pub scroll_offset: usize,
+    pub area: Rect,
+    pub result_rects: Vec<(usize, Rect)>,
+    pub last_click: Option<(std::time::Instant, usize)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum CanvasOverlay {
+    #[default]
+    None,
+    Menu(CanvasMenuState),
+    FilePicker(CanvasFilePickerState),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -575,7 +633,12 @@ impl Default for CanvasViewState {
             hovered_resize: None,
             interaction: CanvasInteraction::Idle,
             editor: None,
+            overlay: CanvasOverlay::None,
+            shortcuts_expanded: false,
+            shortcut_toggle_rect: None,
+            shortcut_toggle_hovered: false,
             last_click: None,
+            last_background_click: None,
             undo: Vec::new(),
             redo: Vec::new(),
         }

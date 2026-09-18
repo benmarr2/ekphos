@@ -98,8 +98,9 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEv
             app.structured.canvas.hovered_node = None;
             app.structured.canvas.hovered_edge = None;
             app.structured.canvas.hovered_resize = None;
+            app.structured.canvas.shortcut_toggle_hovered = false;
         }
-        if (in_content_area || app.canvas_interaction_active()) && handle_structured_document_mouse(app, mouse) {
+        if (in_content_area || app.canvas_interaction_active() || app.canvas_overlay_active()) && handle_structured_document_mouse(app, mouse) {
             return;
         }
         match mouse.kind {
@@ -216,92 +217,225 @@ fn handle_structured_document_mouse(app: &mut App, mouse: crossterm::event::Mous
             }
             _ => false,
         },
-        Some(crate::vault::VaultFileKind::Canvas) => match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
-                if matches!(app.structured.canvas.interaction, crate::app::CanvasInteraction::Connecting { .. }) {
-                    if let Some((node, rect)) = app.structured.canvas.node_rects.iter().rev().find(|(_, rect)| rect.contains(pointer)).copied() {
-                        app.canvas_end_pointer_interaction(Some((node, Some(canvas_side_at(rect, pointer)))));
+        Some(crate::vault::VaultFileKind::Canvas) => {
+            if app.canvas_overlay_active() && handle_canvas_overlay_mouse(app, mouse) {
+                return true;
+            }
+            match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
+                    if app.structured.canvas.shortcut_toggle_rect.is_some_and(|rect| rect.contains(pointer)) {
+                        app.canvas_toggle_shortcuts();
                         return true;
                     }
+                    if matches!(app.structured.canvas.interaction, crate::app::CanvasInteraction::Connecting { .. }) {
+                        if let Some((node, rect)) = app.structured.canvas.node_rects.iter().rev().find(|(_, rect)| rect.contains(pointer)).copied() {
+                            app.canvas_end_pointer_interaction(Some((node, Some(canvas_side_at(rect, pointer)))));
+                            return true;
+                        }
+                    }
+                    if let Some((side, _)) = app.structured.canvas.handle_rects.iter().find(|(_, rect)| rect.contains(pointer)).copied() {
+                        app.canvas_begin_connect(Some(side), Some((mouse.column, mouse.row)));
+                        return true;
+                    }
+                    if let Some((handle, _)) = app.structured.canvas.resize_rects.iter().find(|(_, rect)| rect.contains(pointer)).copied() {
+                        app.canvas_begin_node_resize(app.structured.canvas.selected_node, handle, (mouse.column, mouse.row));
+                        return true;
+                    }
+                    if let Some(editor_node) = app.structured.canvas.editor.as_ref().map(|editor| editor.node) {
+                        if app.canvas_editor_contains(pointer) {
+                            app.canvas_edit_place_cursor(pointer);
+                            return true;
+                        }
+                        let inside_node = app.structured.canvas.node_rects.iter().any(|(node, rect)| *node == editor_node && rect.contains(pointer));
+                        if inside_node || !app.canvas_commit_node_edit() {
+                            return true;
+                        }
+                    }
+                    if let Some((node, _)) = app.structured.canvas.node_rects.iter().rev().find(|(_, rect)| rect.contains(pointer)).copied() {
+                        app.structured.canvas.last_background_click = None;
+                        let double_click = app.structured.canvas.last_click.is_some_and(|(when, previous)| previous == node && when.elapsed() < std::time::Duration::from_millis(400));
+                        app.structured.canvas.last_click = Some((std::time::Instant::now(), node));
+                        app.canvas_begin_node_drag(node, (mouse.column, mouse.row));
+                        if double_click {
+                            app.structured.canvas.last_click = None;
+                            app.structured.canvas.interaction = crate::app::CanvasInteraction::Idle;
+                            app.canvas_activate_selected_node();
+                        }
+                        return true;
+                    }
+                    if let Some((edge, _)) = app.structured.canvas.edge_cells.iter().rev().find(|(_, position)| *position == pointer).copied() {
+                        app.structured.canvas.last_click = None;
+                        app.structured.canvas.last_background_click = None;
+                        app.canvas_select_edge(edge);
+                        return true;
+                    }
+                    if app.structured.canvas.view_area.contains(pointer) {
+                        app.structured.canvas.last_click = None;
+                        let double_click = app.structured.canvas.last_background_click.is_some_and(|(when, previous)| when.elapsed() < std::time::Duration::from_millis(400) && previous.x.abs_diff(pointer.x) <= 1 && previous.y.abs_diff(pointer.y) <= 1);
+                        app.structured.canvas.last_background_click = Some((std::time::Instant::now(), pointer));
+                        if double_click {
+                            app.structured.canvas.last_background_click = None;
+                            app.canvas_open_context_menu(pointer, crate::app::CanvasMenuTarget::Background);
+                            app.canvas_execute_menu_action(crate::app::CanvasMenuAction::AddText);
+                            return true;
+                        }
+                        app.canvas_begin_pan((mouse.column, mouse.row));
+                    }
+                    true
                 }
-                if let Some((side, _)) = app.structured.canvas.handle_rects.iter().find(|(_, rect)| rect.contains(pointer)).copied() {
-                    app.canvas_begin_connect(Some(side), Some((mouse.column, mouse.row)));
-                    return true;
+                MouseEventKind::Down(MouseButton::Middle) => {
+                    app.structured.canvas.last_click = None;
+                    app.structured.canvas.last_background_click = None;
+                    let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
+                    if app.structured.canvas.view_area.contains(pointer) {
+                        app.canvas_begin_pan((mouse.column, mouse.row));
+                    }
+                    true
                 }
-                if let Some((handle, _)) = app.structured.canvas.resize_rects.iter().find(|(_, rect)| rect.contains(pointer)).copied() {
-                    app.canvas_begin_node_resize(app.structured.canvas.selected_node, handle, (mouse.column, mouse.row));
-                    return true;
+                MouseEventKind::Down(MouseButton::Right) => {
+                    app.structured.canvas.last_click = None;
+                    app.structured.canvas.last_background_click = None;
+                    let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
+                    if !app.structured.canvas.view_area.contains(pointer) {
+                        return true;
+                    }
+                    if app.canvas_editor_active() && !app.canvas_commit_node_edit() {
+                        return true;
+                    }
+                    if let Some((node, _)) = app.structured.canvas.node_rects.iter().rev().find(|(_, rect)| rect.contains(pointer)).copied() {
+                        app.canvas_open_context_menu(pointer, crate::app::CanvasMenuTarget::Node(node));
+                    } else if let Some((edge, _)) = app.structured.canvas.edge_cells.iter().rev().find(|(_, position)| *position == pointer).copied() {
+                        app.canvas_open_context_menu(pointer, crate::app::CanvasMenuTarget::Edge(edge));
+                    } else {
+                        app.canvas_open_context_menu(pointer, crate::app::CanvasMenuTarget::Background);
+                    }
+                    true
                 }
-                if let Some(editor_node) = app.structured.canvas.editor.as_ref().map(|editor| editor.node) {
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
+                    app.structured.canvas.hovered_node = app.structured.canvas.node_rects.iter().rev().find(|(_, rect)| rect.contains(pointer)).map(|(node, _)| *node);
+                    app.canvas_pointer_drag_with_aspect((mouse.column, mouse.row), mouse.modifiers.contains(KeyModifiers::SHIFT));
+                    true
+                }
+                MouseEventKind::Drag(MouseButton::Middle) => {
+                    app.canvas_pointer_drag((mouse.column, mouse.row));
+                    true
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
+                    let target = app.structured.canvas.node_rects.iter().rev().find(|(_, rect)| rect.contains(pointer)).map(|(node, rect)| (*node, Some(canvas_side_at(*rect, pointer))));
+                    app.canvas_end_pointer_interaction(target);
+                    true
+                }
+                MouseEventKind::Up(MouseButton::Middle) => {
+                    app.canvas_end_pointer_interaction(None);
+                    true
+                }
+                MouseEventKind::Moved => {
+                    let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
+                    app.structured.canvas.shortcut_toggle_hovered = app.structured.canvas.shortcut_toggle_rect.is_some_and(|rect| rect.contains(pointer));
+                    app.structured.canvas.hovered_node = app.structured.canvas.node_rects.iter().rev().find(|(_, rect)| rect.contains(pointer)).map(|(node, _)| *node);
+                    app.structured.canvas.hovered_edge = if app.structured.canvas.hovered_node.is_none() { app.structured.canvas.edge_cells.iter().rev().find(|(_, position)| *position == pointer).map(|(edge, _)| *edge) } else { None };
+                    app.structured.canvas.hovered_resize = app.structured.canvas.resize_rects.iter().find(|(_, rect)| rect.contains(pointer)).map(|(handle, _)| (*handle, pointer));
+                    true
+                }
+                MouseEventKind::ScrollUp => {
+                    let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
                     if app.canvas_editor_contains(pointer) {
-                        app.canvas_edit_place_cursor(pointer);
-                        return true;
+                        app.canvas_edit_scroll(-3);
+                    } else {
+                        app.canvas_zoom_at(1.1, Some((mouse.column, mouse.row)));
                     }
-                    let inside_node = app.structured.canvas.node_rects.iter().any(|(node, rect)| *node == editor_node && rect.contains(pointer));
-                    if inside_node || !app.canvas_commit_node_edit() {
-                        return true;
+                    true
+                }
+                MouseEventKind::ScrollDown => {
+                    let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
+                    if app.canvas_editor_contains(pointer) {
+                        app.canvas_edit_scroll(3);
+                    } else {
+                        app.canvas_zoom_at(1.0 / 1.1, Some((mouse.column, mouse.row)));
                     }
+                    true
                 }
-                if let Some((node, _)) = app.structured.canvas.node_rects.iter().rev().find(|(_, rect)| rect.contains(pointer)).copied() {
-                    let double_click = app.structured.canvas.last_click.is_some_and(|(when, previous)| previous == node && when.elapsed() < std::time::Duration::from_millis(400));
-                    app.structured.canvas.last_click = Some((std::time::Instant::now(), node));
-                    app.canvas_begin_node_drag(node, (mouse.column, mouse.row));
-                    if double_click {
-                        app.structured.canvas.interaction = crate::app::CanvasInteraction::Idle;
-                        app.canvas_activate_selected_node();
-                    }
-                    return true;
-                }
-                if let Some((edge, _)) = app.structured.canvas.edge_cells.iter().rev().find(|(_, position)| *position == pointer).copied() {
-                    app.canvas_select_edge(edge);
-                    return true;
-                }
-                if app.structured.canvas.view_area.contains(pointer) {
-                    app.canvas_begin_pan((mouse.column, mouse.row));
-                }
-                true
+                _ => false,
             }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
-                app.structured.canvas.hovered_node = app.structured.canvas.node_rects.iter().rev().find(|(_, rect)| rect.contains(pointer)).map(|(node, _)| *node);
-                app.canvas_pointer_drag_with_aspect((mouse.column, mouse.row), mouse.modifiers.contains(KeyModifiers::SHIFT));
-                true
-            }
-            MouseEventKind::Up(MouseButton::Left) => {
-                let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
-                let target = app.structured.canvas.node_rects.iter().rev().find(|(_, rect)| rect.contains(pointer)).map(|(node, rect)| (*node, Some(canvas_side_at(*rect, pointer))));
-                app.canvas_end_pointer_interaction(target);
-                true
-            }
-            MouseEventKind::Moved => {
-                let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
-                app.structured.canvas.hovered_node = app.structured.canvas.node_rects.iter().rev().find(|(_, rect)| rect.contains(pointer)).map(|(node, _)| *node);
-                app.structured.canvas.hovered_edge = if app.structured.canvas.hovered_node.is_none() { app.structured.canvas.edge_cells.iter().rev().find(|(_, position)| *position == pointer).map(|(edge, _)| *edge) } else { None };
-                app.structured.canvas.hovered_resize = app.structured.canvas.resize_rects.iter().find(|(_, rect)| rect.contains(pointer)).map(|(handle, _)| (*handle, pointer));
-                true
-            }
-            MouseEventKind::ScrollUp => {
-                let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
-                if app.canvas_editor_contains(pointer) {
-                    app.canvas_edit_scroll(-3);
-                } else {
-                    app.canvas_zoom_at(1.1, Some((mouse.column, mouse.row)));
-                }
-                true
-            }
-            MouseEventKind::ScrollDown => {
-                let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
-                if app.canvas_editor_contains(pointer) {
-                    app.canvas_edit_scroll(3);
-                } else {
-                    app.canvas_zoom_at(1.0 / 1.1, Some((mouse.column, mouse.row)));
-                }
-                true
-            }
-            _ => false,
-        },
+        }
         Some(crate::vault::VaultFileKind::Markdown) | None => false,
+    }
+}
+
+fn handle_canvas_overlay_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) -> bool {
+    let pointer = ratatui::layout::Position::new(mouse.column, mouse.row);
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Right | MouseButton::Middle) => {
+            app.canvas_close_overlay();
+            false
+        }
+        MouseEventKind::Down(MouseButton::Left) => match &app.structured.canvas.overlay {
+            crate::app::CanvasOverlay::Menu(menu) => {
+                let action = menu.item_rects.iter().find(|(_, rect)| rect.contains(pointer)).map(|(action, _)| *action);
+                if let Some(action) = action {
+                    app.canvas_execute_menu_action(action);
+                } else {
+                    app.canvas_close_overlay();
+                }
+                true
+            }
+            crate::app::CanvasOverlay::FilePicker(picker) => {
+                let clicked = picker.result_rects.iter().find(|(_, rect)| rect.contains(pointer)).map(|(index, _)| *index);
+                if let Some(index) = clicked {
+                    let now = std::time::Instant::now();
+                    let double_click = picker.last_click.is_some_and(|(when, previous)| previous == index && now.duration_since(when) < std::time::Duration::from_millis(400));
+                    if let crate::app::CanvasOverlay::FilePicker(picker) = &mut app.structured.canvas.overlay {
+                        picker.selected_index = index;
+                        picker.last_click = Some((now, index));
+                    }
+                    if double_click {
+                        app.canvas_activate_file_picker_selection();
+                    }
+                } else if !picker.area.contains(pointer) {
+                    app.canvas_close_overlay();
+                }
+                true
+            }
+            crate::app::CanvasOverlay::None => false,
+        },
+        MouseEventKind::Moved => {
+            match &app.structured.canvas.overlay {
+                crate::app::CanvasOverlay::Menu(menu) => {
+                    let hovered = menu.item_rects.iter().position(|(_, rect)| rect.contains(pointer));
+                    if let (Some(index), crate::app::CanvasOverlay::Menu(menu)) = (hovered, &mut app.structured.canvas.overlay) {
+                        menu.selected_index = index;
+                    }
+                }
+                crate::app::CanvasOverlay::FilePicker(picker) => {
+                    let hovered = picker.result_rects.iter().find(|(_, rect)| rect.contains(pointer)).map(|(index, _)| *index);
+                    if let (Some(index), crate::app::CanvasOverlay::FilePicker(picker)) = (hovered, &mut app.structured.canvas.overlay) {
+                        picker.selected_index = index;
+                    }
+                }
+                crate::app::CanvasOverlay::None => return false,
+            }
+            true
+        }
+        MouseEventKind::ScrollUp => {
+            if matches!(app.structured.canvas.overlay, crate::app::CanvasOverlay::Menu(_)) {
+                app.canvas_menu_move_selection(-1);
+            } else {
+                app.canvas_file_picker_move_selection(-1);
+            }
+            true
+        }
+        MouseEventKind::ScrollDown => {
+            if matches!(app.structured.canvas.overlay, crate::app::CanvasOverlay::Menu(_)) {
+                app.canvas_menu_move_selection(1);
+            } else {
+                app.canvas_file_picker_move_selection(1);
+            }
+            true
+        }
+        _ => true,
     }
 }
 
@@ -625,6 +759,7 @@ mod tests {
             let alpha_path = vault.join("Alpha.md");
             fs::write(&alpha_path, "# Alpha\n\nAlpha body").unwrap();
             fs::write(vault.join("Beta.md"), "# Beta\n\nBeta body").unwrap();
+            fs::write(vault.join("Board.canvas"), r#"{"nodes":[],"edges":[]}"#).unwrap();
             let config = Config { general: crate::config::GeneralConfig { welcome_shown: false, check_updates: false, ..Default::default() }, ..Default::default() };
             let dependencies = AppDependencies::headless(root.join("config"), root.join("cache"));
             let mut app = App::new_injected(config, vault, None, dependencies);
@@ -704,5 +839,59 @@ mod tests {
 
         assert_eq!(fixture.app.current_note().map(|note| note.title.as_str()), Some("Alpha"));
         assert_eq!(fixture.app.state.focus, Focus::Sidebar);
+    }
+
+    #[test]
+    fn canvas_local_keys_leave_global_zen_binding_intact() {
+        let mut fixture = SidebarApp::new();
+        assert!(fixture.app.select_note_by_path(&fixture.root.join("vault/Board.canvas")));
+        fixture.app.state.focus = Focus::Content;
+
+        handle_normal_mode(&mut fixture.app, crossterm::event::KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
+        assert!(fixture.app.state.zen_mode);
+
+        handle_normal_mode(&mut fixture.app, crossterm::event::KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
+        assert!(!fixture.app.state.zen_mode);
+        handle_normal_mode(&mut fixture.app, crossterm::event::KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE));
+        assert_eq!(fixture.app.state.status_message.as_deref(), Some("Nothing to undo"));
+        handle_normal_mode(&mut fixture.app, crossterm::event::KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE));
+        assert!(fixture.app.structured.canvas.shortcuts_expanded);
+
+        let zoom = fixture.app.structured.canvas.zoom;
+        handle_normal_mode(&mut fixture.app, crossterm::event::KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE));
+        handle_normal_mode(&mut fixture.app, crossterm::event::KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        assert!(fixture.app.structured.canvas.zoom > zoom);
+    }
+
+    #[test]
+    fn canvas_overlay_consumes_clicks_outside_the_content_panel() {
+        let mut fixture = SidebarApp::new();
+        assert!(fixture.app.select_note_by_path(&fixture.root.join("vault/Board.canvas")));
+        fixture.app.state.focus = Focus::Content;
+        fixture.app.structured.canvas.view_area = fixture.app.state.content_area;
+        assert!(fixture.app.canvas_open_context_menu(ratatui::layout::Position::new(40, 5), crate::app::CanvasMenuTarget::Background));
+
+        let sidebar_click = fixture.beta_click(MouseEventKind::Down(MouseButton::Left));
+        handle_mouse_event(&mut fixture.app, sidebar_click);
+
+        assert_eq!(fixture.app.current_note().map(|note| note.title.as_str()), Some("Board"));
+        assert_eq!(fixture.app.state.focus, Focus::Content);
+        assert!(!fixture.app.canvas_overlay_active());
+    }
+
+    #[test]
+    fn canvas_redo_does_not_run_behind_an_open_overlay() {
+        let mut fixture = SidebarApp::new();
+        assert!(fixture.app.select_note_by_path(&fixture.root.join("vault/Board.canvas")));
+        fixture.app.state.focus = Focus::Content;
+        fixture.app.structured.canvas.view_area = fixture.app.state.content_area;
+        let document = fixture.app.structured.canvas.document.clone().unwrap();
+        fixture.app.structured.canvas.redo.push(document);
+        assert!(fixture.app.canvas_open_add_menu());
+
+        handle_normal_mode(&mut fixture.app, crossterm::event::KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+
+        assert!(fixture.app.canvas_overlay_active());
+        assert_eq!(fixture.app.structured.canvas.redo.len(), 1);
     }
 }

@@ -173,6 +173,14 @@ impl App {
                 self.structured.canvas.hovered_resize = None;
                 self.structured.canvas.interaction = CanvasInteraction::Idle;
                 self.structured.canvas.editor = None;
+                self.structured.canvas.overlay = CanvasOverlay::None;
+                if reset_selection {
+                    self.structured.canvas.shortcuts_expanded = false;
+                }
+                self.structured.canvas.shortcut_toggle_rect = None;
+                self.structured.canvas.shortcut_toggle_hovered = false;
+                self.structured.canvas.last_click = None;
+                self.structured.canvas.last_background_click = None;
                 self.structured.canvas.undo.clear();
                 self.structured.canvas.redo.clear();
                 self.structured.canvas.needs_fit = true;
@@ -188,6 +196,11 @@ impl App {
                 self.structured.canvas.hovered_resize = None;
                 self.structured.canvas.interaction = CanvasInteraction::Idle;
                 self.structured.canvas.editor = None;
+                self.structured.canvas.overlay = CanvasOverlay::None;
+                self.structured.canvas.shortcut_toggle_rect = None;
+                self.structured.canvas.shortcut_toggle_hovered = false;
+                self.structured.canvas.last_click = None;
+                self.structured.canvas.last_background_click = None;
                 self.structured.canvas.undo.clear();
                 self.structured.canvas.redo.clear();
             }
@@ -581,6 +594,375 @@ impl App {
         }
     }
 
+    pub fn canvas_world_position_at(&self, pointer: ratatui::layout::Position) -> (i64, i64) {
+        let area = self.structured.canvas.view_area;
+        if area.width == 0 || area.height == 0 {
+            return (self.structured.canvas.viewport_x.round() as i64, self.structured.canvas.viewport_y.round() as i64);
+        }
+        let zoom = self.structured.canvas.zoom.max(0.1);
+        let x = pointer.x.clamp(area.x, area.right().saturating_sub(1)).saturating_sub(area.x) as f64;
+        let y = pointer.y.clamp(area.y, area.bottom().saturating_sub(1)).saturating_sub(area.y) as f64;
+        ((self.structured.canvas.viewport_x + x * 20.0 / zoom).round() as i64, (self.structured.canvas.viewport_y + y * 40.0 / zoom).round() as i64)
+    }
+
+    pub fn canvas_open_context_menu(&mut self, pointer: ratatui::layout::Position, target: CanvasMenuTarget) -> bool {
+        self.canvas_cancel_interaction();
+        self.structured.canvas.last_click = None;
+        self.structured.canvas.last_background_click = None;
+        let items = match target {
+            CanvasMenuTarget::Background => vec![CanvasMenuAction::AddText, CanvasMenuAction::AddFile, CanvasMenuAction::AddLink, CanvasMenuAction::AddGroup, CanvasMenuAction::Fit],
+            CanvasMenuTarget::Node(index) => {
+                let Some(kind) = self.structured.canvas.document.as_ref().and_then(|document| document.nodes.get(index)).map(|node| node.kind.clone()) else {
+                    return false;
+                };
+                self.canvas_select_node(index);
+                let mut items = match &kind {
+                    CanvasNodeKind::Text { .. } | CanvasNodeKind::Link { .. } => vec![CanvasMenuAction::Edit],
+                    CanvasNodeKind::File { .. } => vec![CanvasMenuAction::Open],
+                    CanvasNodeKind::Group { .. } => vec![CanvasMenuAction::RenameGroup],
+                    CanvasNodeKind::Unknown { .. } => Vec::new(),
+                };
+                if matches!(kind, CanvasNodeKind::Link { .. }) {
+                    items.push(CanvasMenuAction::Open);
+                }
+                items.extend([CanvasMenuAction::Duplicate, CanvasMenuAction::Connect, CanvasMenuAction::Delete]);
+                items
+            }
+            CanvasMenuTarget::Edge(index) => {
+                if self.structured.canvas.document.as_ref().is_none_or(|document| index >= document.edges.len()) {
+                    return false;
+                }
+                self.canvas_select_edge(index);
+                vec![CanvasMenuAction::Delete]
+            }
+        };
+        let world_position = self.canvas_world_position_at(pointer);
+        self.structured.canvas.interaction = CanvasInteraction::Idle;
+        self.structured.canvas.overlay = CanvasOverlay::Menu(CanvasMenuState { screen_position: pointer, world_position, target, items, selected_index: 0, area: Rect::default(), item_rects: Vec::new() });
+        self.state.focus = Focus::Content;
+        true
+    }
+
+    pub fn canvas_open_add_menu(&mut self) -> bool {
+        let area = self.structured.canvas.view_area;
+        if area.width == 0 || area.height == 0 {
+            return false;
+        }
+        self.canvas_open_context_menu(rect_center(area), CanvasMenuTarget::Background)
+    }
+
+    pub fn canvas_open_selection_menu(&mut self) -> bool {
+        let canvas = &self.structured.canvas;
+        if let Some(edge) = canvas.selected_edge {
+            let pointer = canvas.edge_cells.iter().find(|(index, _)| *index == edge).map(|(_, position)| *position).unwrap_or_else(|| rect_center(canvas.view_area));
+            return self.canvas_open_context_menu(pointer, CanvasMenuTarget::Edge(edge));
+        }
+        if canvas.document.as_ref().is_none_or(|document| document.nodes.is_empty()) {
+            return self.canvas_open_add_menu();
+        }
+        let node = canvas.selected_node;
+        let pointer = canvas.node_rects.iter().find(|(index, _)| *index == node).map(|(_, rect)| rect_center(*rect)).unwrap_or_else(|| rect_center(canvas.view_area));
+        self.canvas_open_context_menu(pointer, CanvasMenuTarget::Node(node))
+    }
+
+    pub fn canvas_close_overlay(&mut self) -> bool {
+        if matches!(self.structured.canvas.overlay, CanvasOverlay::None) {
+            return false;
+        }
+        self.structured.canvas.overlay = CanvasOverlay::None;
+        true
+    }
+
+    pub fn canvas_overlay_active(&self) -> bool {
+        !matches!(self.structured.canvas.overlay, CanvasOverlay::None)
+    }
+
+    pub fn canvas_toggle_shortcuts(&mut self) {
+        self.structured.canvas.shortcuts_expanded = !self.structured.canvas.shortcuts_expanded;
+        self.state.status_message = Some(if self.structured.canvas.shortcuts_expanded { "Canvas shortcuts expanded" } else { "Canvas shortcuts collapsed" }.to_string());
+    }
+
+    pub fn canvas_menu_move_selection(&mut self, delta: isize) -> bool {
+        let CanvasOverlay::Menu(menu) = &mut self.structured.canvas.overlay else {
+            return false;
+        };
+        if menu.items.is_empty() {
+            return true;
+        }
+        menu.selected_index = (menu.selected_index as isize + delta).rem_euclid(menu.items.len() as isize) as usize;
+        true
+    }
+
+    pub fn canvas_activate_menu_selection(&mut self) -> bool {
+        let action = match &self.structured.canvas.overlay {
+            CanvasOverlay::Menu(menu) => menu.items.get(menu.selected_index).copied(),
+            CanvasOverlay::None | CanvasOverlay::FilePicker(_) => None,
+        };
+        action.is_some_and(|action| self.canvas_execute_menu_action(action))
+    }
+
+    pub fn canvas_execute_menu_action(&mut self, action: CanvasMenuAction) -> bool {
+        let (target, world_position) = match &self.structured.canvas.overlay {
+            CanvasOverlay::Menu(menu) => (menu.target, menu.world_position),
+            CanvasOverlay::None | CanvasOverlay::FilePicker(_) => return false,
+        };
+        self.structured.canvas.overlay = CanvasOverlay::None;
+        match action {
+            CanvasMenuAction::AddText => self.canvas_add_node(CanvasNodeKind::Text { text: String::new() }, world_position, true),
+            CanvasMenuAction::AddLink => self.canvas_add_node(CanvasNodeKind::Link { url: String::new() }, world_position, true),
+            CanvasMenuAction::AddGroup => self.canvas_add_node(CanvasNodeKind::Group { label: None, background: None, background_style: None }, world_position, true),
+            CanvasMenuAction::AddFile => {
+                let mut results = self.build_file_picker_results("");
+                for result in &mut results {
+                    if let Some(note) = self.vault.notes.iter().find(|note| note.id == result.note_id) {
+                        if !note.kind.is_markdown() {
+                            result.display_name = format!("{}.{}", note.title, note.kind.extension());
+                        }
+                    }
+                }
+                self.structured.canvas.overlay = CanvasOverlay::FilePicker(CanvasFilePickerState { world_position, query: String::new(), results, selected_index: 0, scroll_offset: 0, area: Rect::default(), result_rects: Vec::new(), last_click: None });
+                self.state.status_message = Some("Choose a vault file for this card".to_string());
+                true
+            }
+            CanvasMenuAction::Edit | CanvasMenuAction::RenameGroup => {
+                if let CanvasMenuTarget::Node(index) = target {
+                    self.canvas_select_node(index);
+                }
+                self.canvas_begin_node_edit()
+            }
+            CanvasMenuAction::Open => {
+                if let CanvasMenuTarget::Node(index) = target {
+                    self.canvas_select_node(index);
+                }
+                self.open_selected_canvas_node()
+            }
+            CanvasMenuAction::Duplicate => {
+                if let CanvasMenuTarget::Node(index) = target {
+                    self.canvas_select_node(index);
+                }
+                self.canvas_duplicate_selected_node()
+            }
+            CanvasMenuAction::Connect => {
+                if let CanvasMenuTarget::Node(index) = target {
+                    self.canvas_select_node(index);
+                }
+                self.canvas_begin_connect(None, None);
+                true
+            }
+            CanvasMenuAction::Delete => match target {
+                CanvasMenuTarget::Node(index) => {
+                    self.canvas_select_node(index);
+                    self.canvas_delete_selected_node()
+                }
+                CanvasMenuTarget::Edge(index) => {
+                    self.canvas_select_edge(index);
+                    self.canvas_delete_selected_edge()
+                }
+                CanvasMenuTarget::Background => false,
+            },
+            CanvasMenuAction::Fit => {
+                self.canvas_fit();
+                true
+            }
+        }
+    }
+
+    pub fn canvas_file_picker_push_char(&mut self, character: char) -> bool {
+        let query = match &mut self.structured.canvas.overlay {
+            CanvasOverlay::FilePicker(picker) => {
+                picker.query.push(character);
+                picker.query.clone()
+            }
+            CanvasOverlay::None | CanvasOverlay::Menu(_) => return false,
+        };
+        self.canvas_update_file_picker_results(&query);
+        true
+    }
+
+    pub fn canvas_file_picker_pop_char(&mut self) -> bool {
+        let query = match &mut self.structured.canvas.overlay {
+            CanvasOverlay::FilePicker(picker) => {
+                picker.query.pop();
+                picker.query.clone()
+            }
+            CanvasOverlay::None | CanvasOverlay::Menu(_) => return false,
+        };
+        self.canvas_update_file_picker_results(&query);
+        true
+    }
+
+    fn canvas_update_file_picker_results(&mut self, query: &str) {
+        let mut results = self.build_file_picker_results(query);
+        for result in &mut results {
+            if let Some(note) = self.vault.notes.iter().find(|note| note.id == result.note_id) {
+                if !note.kind.is_markdown() {
+                    result.display_name = format!("{}.{}", note.title, note.kind.extension());
+                }
+            }
+        }
+        if let CanvasOverlay::FilePicker(picker) = &mut self.structured.canvas.overlay {
+            picker.results = results;
+            picker.selected_index = 0;
+            picker.scroll_offset = 0;
+            picker.result_rects.clear();
+            picker.last_click = None;
+        }
+    }
+
+    pub fn canvas_file_picker_move_selection(&mut self, delta: isize) -> bool {
+        const VISIBLE_RESULTS: usize = 10;
+        let CanvasOverlay::FilePicker(picker) = &mut self.structured.canvas.overlay else {
+            return false;
+        };
+        if picker.results.is_empty() {
+            return true;
+        }
+        let visible_results = if picker.area.height > 0 { usize::from(picker.area.height.saturating_sub(4)).clamp(1, VISIBLE_RESULTS) } else { VISIBLE_RESULTS };
+        picker.selected_index = (picker.selected_index as isize + delta).rem_euclid(picker.results.len() as isize) as usize;
+        if picker.selected_index < picker.scroll_offset {
+            picker.scroll_offset = picker.selected_index;
+        } else if picker.selected_index >= picker.scroll_offset + visible_results {
+            picker.scroll_offset = picker.selected_index + 1 - visible_results;
+        }
+        true
+    }
+
+    pub fn canvas_file_picker_move_page(&mut self, direction: isize) -> bool {
+        const VISIBLE_RESULTS: usize = 10;
+        let page_size = match &self.structured.canvas.overlay {
+            CanvasOverlay::FilePicker(picker) if picker.area.height > 0 => usize::from(picker.area.height.saturating_sub(4)).clamp(1, VISIBLE_RESULTS),
+            CanvasOverlay::FilePicker(_) => VISIBLE_RESULTS,
+            CanvasOverlay::None | CanvasOverlay::Menu(_) => return false,
+        };
+        for _ in 0..page_size {
+            self.canvas_file_picker_move_selection(direction);
+        }
+        true
+    }
+
+    pub fn canvas_activate_file_picker_selection(&mut self) -> bool {
+        let (note_id, world_position, picker) = match &self.structured.canvas.overlay {
+            CanvasOverlay::FilePicker(picker) => {
+                let Some(result) = picker.results.get(picker.selected_index) else {
+                    self.state.status_message = Some("No matching vault file".to_string());
+                    return false;
+                };
+                (result.note_id, picker.world_position, picker.clone())
+            }
+            CanvasOverlay::None | CanvasOverlay::Menu(_) => return false,
+        };
+        self.structured.canvas.overlay = CanvasOverlay::None;
+        if self.canvas_add_file_node(note_id, world_position) {
+            true
+        } else {
+            self.structured.canvas.overlay = CanvasOverlay::FilePicker(picker);
+            false
+        }
+    }
+
+    fn canvas_add_file_node(&mut self, note_id: NoteId, world_position: (i64, i64)) -> bool {
+        let Some(file) = self.vault.notes.iter().find(|note| note.id == note_id).and_then(|note| note.file_path.as_ref()).and_then(|path| path.strip_prefix(self.state.config.notes_path()).ok()).map(|path| path.to_string_lossy().replace('\\', "/")) else {
+            self.state.status_message = Some("Could not resolve that vault file".to_string());
+            return false;
+        };
+        self.canvas_add_node(CanvasNodeKind::File { file, subpath: None }, world_position, false)
+    }
+
+    fn canvas_add_node(&mut self, kind: CanvasNodeKind, world_position: (i64, i64), edit_after_create: bool) -> bool {
+        let (width, height) = match kind {
+            CanvasNodeKind::Text { .. } => (320, 200),
+            CanvasNodeKind::File { .. } => (400, 280),
+            CanvasNodeKind::Link { .. } => (400, 200),
+            CanvasNodeKind::Group { .. } => (640, 400),
+            CanvasNodeKind::Unknown { .. } => return false,
+        };
+        let Some(previous_document) = self.structured.canvas.document.clone() else {
+            return false;
+        };
+        let previous_selected_node = self.structured.canvas.selected_node;
+        let previous_selected_edge = self.structured.canvas.selected_edge;
+        let previous_needs_fit = self.structured.canvas.needs_fit;
+        let id = next_canvas_node_id(&previous_document);
+        let node = CanvasNode { id, x: world_position.0.saturating_sub(width / 2), y: world_position.1.saturating_sub(height / 2), width, height, color: None, kind, extra: BTreeMap::new() };
+        let document = self.structured.canvas.document.as_mut().expect("document checked");
+        document.nodes.push(node);
+        self.structured.canvas.selected_node = document.nodes.len() - 1;
+        self.structured.canvas.selected_edge = None;
+        self.structured.canvas.needs_fit = false;
+        if self.persist_canvas_document("Card added") {
+            self.push_canvas_undo(previous_document);
+            if edit_after_create {
+                self.canvas_begin_node_edit();
+            }
+            true
+        } else {
+            self.structured.canvas.document = Some(previous_document);
+            self.structured.canvas.selected_node = previous_selected_node;
+            self.structured.canvas.selected_edge = previous_selected_edge;
+            self.structured.canvas.needs_fit = previous_needs_fit;
+            false
+        }
+    }
+
+    pub fn canvas_duplicate_selected_node(&mut self) -> bool {
+        let index = self.structured.canvas.selected_node;
+        let Some(previous_document) = self.structured.canvas.document.clone() else {
+            return false;
+        };
+        let Some(mut node) = previous_document.nodes.get(index).cloned() else {
+            return false;
+        };
+        let previous_selected_edge = self.structured.canvas.selected_edge;
+        let previous_needs_fit = self.structured.canvas.needs_fit;
+        node.id = next_canvas_node_id(&previous_document);
+        node.x = node.x.saturating_add(40);
+        node.y = node.y.saturating_add(40);
+        let document = self.structured.canvas.document.as_mut().expect("document checked");
+        document.nodes.push(node);
+        self.structured.canvas.selected_node = document.nodes.len() - 1;
+        self.structured.canvas.selected_edge = None;
+        self.structured.canvas.needs_fit = false;
+        if self.persist_canvas_document("Card duplicated") {
+            self.push_canvas_undo(previous_document);
+            true
+        } else {
+            self.structured.canvas.document = Some(previous_document);
+            self.structured.canvas.selected_node = index;
+            self.structured.canvas.selected_edge = previous_selected_edge;
+            self.structured.canvas.needs_fit = previous_needs_fit;
+            false
+        }
+    }
+
+    pub fn canvas_delete_selected_node(&mut self) -> bool {
+        let index = self.structured.canvas.selected_node;
+        let Some(previous_document) = self.structured.canvas.document.clone() else {
+            return false;
+        };
+        let Some(node_id) = previous_document.nodes.get(index).map(|node| node.id.clone()) else {
+            self.state.status_message = Some("Select a card first".to_string());
+            return false;
+        };
+        let previous_selected_edge = self.structured.canvas.selected_edge;
+        let previous_editor = self.structured.canvas.editor.clone();
+        let document = self.structured.canvas.document.as_mut().expect("document checked");
+        document.nodes.remove(index);
+        document.edges.retain(|edge| edge.from_node != node_id && edge.to_node != node_id);
+        self.structured.canvas.selected_node = index.min(document.nodes.len().saturating_sub(1));
+        self.structured.canvas.selected_edge = None;
+        self.structured.canvas.editor = None;
+        if self.persist_canvas_document("Card deleted") {
+            self.push_canvas_undo(previous_document);
+            true
+        } else {
+            self.structured.canvas.document = Some(previous_document);
+            self.structured.canvas.selected_node = index;
+            self.structured.canvas.selected_edge = previous_selected_edge;
+            self.structured.canvas.editor = previous_editor;
+            false
+        }
+    }
+
     pub fn canvas_delete_selected_edge(&mut self) -> bool {
         let Some(index) = self.structured.canvas.selected_edge else {
             self.state.status_message = Some("Select a connection first".to_string());
@@ -610,6 +992,7 @@ impl App {
     pub fn canvas_nudge_selected(&mut self, dx: i64, dy: i64) -> bool {
         let index = self.structured.canvas.selected_node;
         let previous_document = self.structured.canvas.document.clone();
+        let previous_needs_fit = self.structured.canvas.needs_fit;
         let Some(node) = self.structured.canvas.document.as_mut().and_then(|document| document.nodes.get_mut(index)) else {
             return false;
         };
@@ -626,6 +1009,7 @@ impl App {
             if let Some(node) = self.structured.canvas.document.as_mut().and_then(|document| document.nodes.get_mut(index)) {
                 (node.x, node.y) = origin;
             }
+            self.structured.canvas.needs_fit = previous_needs_fit;
             false
         }
     }
@@ -635,6 +1019,7 @@ impl App {
         let Some(previous_document) = self.structured.canvas.document.clone() else {
             return false;
         };
+        let previous_needs_fit = self.structured.canvas.needs_fit;
         let Some(node) = self.structured.canvas.document.as_mut().and_then(|document| document.nodes.get_mut(index)) else {
             return false;
         };
@@ -654,6 +1039,7 @@ impl App {
             true
         } else {
             self.structured.canvas.document = Some(previous_document);
+            self.structured.canvas.needs_fit = previous_needs_fit;
             false
         }
     }
@@ -708,6 +1094,7 @@ impl App {
         self.structured.canvas.selected_edge = None;
         self.structured.canvas.interaction = CanvasInteraction::Idle;
         self.structured.canvas.editor = None;
+        self.structured.canvas.overlay = CanvasOverlay::None;
     }
 
     pub fn canvas_interaction_active(&self) -> bool {
@@ -746,7 +1133,7 @@ impl App {
         self.structured.canvas.selected_edge = None;
         self.structured.canvas.interaction = CanvasInteraction::Idle;
         self.state.focus = Focus::Content;
-        self.state.status_message = Some(if field.multiline() { "Editing card · Ctrl+Enter saves · Esc cancels" } else { "Editing card · Enter saves · Esc cancels" }.to_string());
+        self.state.status_message = Some(if field.multiline() { "Editing card · Ctrl+S saves · Esc cancels" } else { "Editing card · Enter saves · Esc cancels" }.to_string());
         true
     }
 
@@ -945,6 +1332,10 @@ impl App {
                 }
             }
             Some(CanvasNodeKind::Link { url }) => {
+                if url.trim().is_empty() {
+                    self.state.status_message = Some("Link card is empty".to_string());
+                    return false;
+                }
                 self.open_path_or_url(&url);
                 true
             }
@@ -1061,6 +1452,21 @@ fn next_canvas_edge_id(document: &crate::canvas::Canvas) -> String {
         }
         sequence += 1;
     }
+}
+
+fn next_canvas_node_id(document: &crate::canvas::Canvas) -> String {
+    let mut sequence = document.nodes.len() + 1;
+    loop {
+        let candidate = format!("ekphos-node-{sequence}");
+        if document.nodes.iter().all(|node| node.id != candidate) {
+            return candidate;
+        }
+        sequence += 1;
+    }
+}
+
+fn rect_center(rect: Rect) -> ratatui::layout::Position {
+    ratatui::layout::Position::new(rect.x + rect.width / 2, rect.y + rect.height / 2)
 }
 
 fn push_bounded_history(history: &mut Vec<crate::canvas::Canvas>, document: crate::canvas::Canvas) {
@@ -1376,6 +1782,128 @@ views:
     }
 
     #[test]
+    fn canvas_context_menu_adds_cards_at_the_pointer_and_undoes_them() {
+        let mut fixture = Fixture::new();
+        let canvas_path = fixture.vault.join("Board.canvas");
+        assert!(fixture.app.select_note_by_path(&canvas_path));
+        fixture.app.structured.canvas.view_area = Rect::new(10, 5, 80, 30);
+        fixture.app.structured.canvas.viewport_x = 100.0;
+        fixture.app.structured.canvas.viewport_y = 200.0;
+        fixture.app.structured.canvas.zoom = 1.0;
+
+        let pointer = ratatui::layout::Position::new(30, 15);
+        assert!(fixture.app.canvas_open_context_menu(pointer, CanvasMenuTarget::Background));
+        assert!(fixture.app.canvas_execute_menu_action(CanvasMenuAction::AddText));
+
+        let document = fixture.app.structured.canvas.document.as_ref().unwrap();
+        assert_eq!(document.nodes.len(), 3);
+        let added = document.nodes.last().unwrap();
+        assert_eq!((added.x, added.y, added.width, added.height), (340, 500, 320, 200));
+        assert_eq!(added.kind, CanvasNodeKind::Text { text: String::new() });
+        assert!(fixture.app.canvas_editor_active());
+
+        assert!(fixture.app.canvas_undo());
+        assert_eq!(fixture.app.structured.canvas.document.as_ref().unwrap().nodes.len(), 2);
+        assert!(!fixture.app.canvas_editor_active());
+    }
+
+    #[test]
+    fn canvas_card_duplication_and_deletion_round_trip_attached_edges() {
+        let mut fixture = Fixture::new();
+        assert!(fixture.app.select_note_by_path(&fixture.vault.join("Board.canvas")));
+        fixture.app.canvas_select_node(0);
+
+        assert!(fixture.app.canvas_duplicate_selected_node());
+        let document = fixture.app.structured.canvas.document.as_ref().unwrap();
+        assert_eq!(document.nodes.len(), 3);
+        assert_eq!((document.nodes[2].x, document.nodes[2].y), (40, 40));
+        assert_ne!(document.nodes[2].id, document.nodes[0].id);
+
+        fixture.app.canvas_select_node(0);
+        assert!(fixture.app.canvas_delete_selected_node());
+        let document = fixture.app.structured.canvas.document.as_ref().unwrap();
+        assert_eq!(document.nodes.len(), 2);
+        assert!(document.edges.is_empty());
+
+        assert!(fixture.app.canvas_undo());
+        let document = fixture.app.structured.canvas.document.as_ref().unwrap();
+        assert_eq!(document.nodes.len(), 3);
+        assert_eq!(document.edges.len(), 1);
+    }
+
+    #[test]
+    fn failed_canvas_mutations_restore_document_selection_and_picker() {
+        let mut fixture = Fixture::new();
+        let canvas_path = fixture.vault.join("Board.canvas");
+        assert!(fixture.app.select_note_by_path(&canvas_path));
+        let original = fixture.app.structured.canvas.document.clone().unwrap();
+        fixture.app.structured.canvas.selected_node = 1;
+        fixture.app.structured.canvas.selected_edge = Some(0);
+        fixture.app.structured.canvas.needs_fit = true;
+
+        std::fs::remove_file(&canvas_path).unwrap();
+        std::fs::create_dir(&canvas_path).unwrap();
+
+        assert!(!fixture.app.canvas_duplicate_selected_node());
+        assert_eq!(fixture.app.structured.canvas.document.as_ref(), Some(&original));
+        assert_eq!(fixture.app.structured.canvas.selected_node, 1);
+        assert_eq!(fixture.app.structured.canvas.selected_edge, Some(0));
+        assert!(fixture.app.structured.canvas.needs_fit);
+
+        assert!(!fixture.app.canvas_add_node(CanvasNodeKind::Text { text: String::new() }, (100, 100), false));
+        assert_eq!(fixture.app.structured.canvas.document.as_ref(), Some(&original));
+        assert_eq!(fixture.app.structured.canvas.selected_node, 1);
+        assert_eq!(fixture.app.structured.canvas.selected_edge, Some(0));
+        assert!(fixture.app.structured.canvas.needs_fit);
+
+        assert!(!fixture.app.canvas_nudge_selected(20, 40));
+        assert_eq!(fixture.app.structured.canvas.document.as_ref(), Some(&original));
+        assert!(fixture.app.structured.canvas.needs_fit);
+        assert!(!fixture.app.canvas_resize_selected(20, 40));
+        assert_eq!(fixture.app.structured.canvas.document.as_ref(), Some(&original));
+        assert!(fixture.app.structured.canvas.needs_fit);
+
+        assert!(!fixture.app.canvas_delete_selected_node());
+        assert_eq!(fixture.app.structured.canvas.document.as_ref(), Some(&original));
+        assert_eq!(fixture.app.structured.canvas.selected_node, 1);
+        assert_eq!(fixture.app.structured.canvas.selected_edge, Some(0));
+
+        fixture.app.structured.canvas.view_area = Rect::new(0, 0, 80, 30);
+        assert!(fixture.app.canvas_open_context_menu(ratatui::layout::Position::new(20, 10), CanvasMenuTarget::Background));
+        assert!(fixture.app.canvas_execute_menu_action(CanvasMenuAction::AddFile));
+        assert!(!fixture.app.canvas_activate_file_picker_selection());
+        assert!(matches!(fixture.app.structured.canvas.overlay, CanvasOverlay::FilePicker(_)));
+        assert_eq!(fixture.app.structured.canvas.document.as_ref(), Some(&original));
+        assert!(fixture.app.structured.canvas.undo.is_empty());
+    }
+
+    #[test]
+    fn canvas_file_picker_creates_a_vault_relative_file_card() {
+        let mut fixture = Fixture::new();
+        assert!(fixture.app.select_note_by_path(&fixture.vault.join("Board.canvas")));
+        fixture.app.structured.canvas.view_area = Rect::new(0, 0, 80, 30);
+        assert!(fixture.app.canvas_open_context_menu(ratatui::layout::Position::new(20, 10), CanvasMenuTarget::Background));
+        assert!(fixture.app.canvas_execute_menu_action(CanvasMenuAction::AddFile));
+
+        if let CanvasOverlay::FilePicker(picker) = &mut fixture.app.structured.canvas.overlay {
+            picker.last_click = Some((std::time::Instant::now(), 0));
+            picker.result_rects.push((0, Rect::new(1, 1, 1, 1)));
+        }
+        assert!(fixture.app.canvas_file_picker_push_char('A'));
+        let CanvasOverlay::FilePicker(picker) = &mut fixture.app.structured.canvas.overlay else {
+            panic!("file picker should be open");
+        };
+        assert!(picker.last_click.is_none());
+        assert!(picker.result_rects.is_empty());
+        picker.selected_index = picker.results.iter().position(|result| result.display_name == "Alpha").unwrap();
+        assert!(fixture.app.canvas_activate_file_picker_selection());
+
+        let document = fixture.app.structured.canvas.document.as_ref().unwrap();
+        assert_eq!(document.nodes.last().unwrap().kind, CanvasNodeKind::File { file: "Alpha.md".to_string(), subpath: None });
+        assert!(matches!(fixture.app.structured.canvas.overlay, CanvasOverlay::None));
+    }
+
+    #[test]
     fn canvas_editor_vertical_motion_preserves_terminal_columns() {
         let text = "a界x\n1234".to_string();
         let first_line_cursor = "a界".len();
@@ -1498,6 +2026,16 @@ views:
         let world_after = (fixture.app.structured.canvas.viewport_x + f64::from(pointer.0 - 10) * 20.0 / fixture.app.structured.canvas.zoom, fixture.app.structured.canvas.viewport_y + f64::from(pointer.1 - 5) * 40.0 / fixture.app.structured.canvas.zoom);
 
         assert_eq!(world_before, world_after);
+    }
+
+    #[test]
+    fn canvas_zero_sized_view_has_stable_world_coordinates() {
+        let mut fixture = Fixture::new();
+        fixture.app.structured.canvas.view_area = Rect::new(10, 5, 0, 0);
+        fixture.app.structured.canvas.viewport_x = 100.4;
+        fixture.app.structured.canvas.viewport_y = -200.6;
+
+        assert_eq!(fixture.app.canvas_world_position_at(ratatui::layout::Position::new(0, 0)), (100, -201));
     }
 
     #[test]

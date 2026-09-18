@@ -43,7 +43,7 @@ pub enum AppCommand {
     FoldAll,
     UnfoldAll,
     EditNote,
-    CreateNote,
+    CreateDocument,
     CreateFolder,
     DeleteItem,
     RenameItem,
@@ -53,12 +53,19 @@ pub enum AppCommand {
     SidebarSearch,
     CycleSort,
     ToggleEditorMode,
+    CanvasSelectLeft,
+    CanvasSelectRight,
+    CanvasZoomIn,
+    CanvasZoomOut,
+    CanvasUndo,
+    CanvasRedo,
+    ToggleCanvasShortcuts,
     InsertTask,
     ToggleEditorFold,
 }
 
 impl AppCommand {
-    pub const ALL: [Self; 49] = [
+    pub const ALL: [Self; 56] = [
         Self::Quit,
         Self::FocusNext,
         Self::FocusPrevious,
@@ -96,7 +103,7 @@ impl AppCommand {
         Self::FoldAll,
         Self::UnfoldAll,
         Self::EditNote,
-        Self::CreateNote,
+        Self::CreateDocument,
         Self::CreateFolder,
         Self::DeleteItem,
         Self::RenameItem,
@@ -106,6 +113,13 @@ impl AppCommand {
         Self::SidebarSearch,
         Self::CycleSort,
         Self::ToggleEditorMode,
+        Self::CanvasSelectLeft,
+        Self::CanvasSelectRight,
+        Self::CanvasZoomIn,
+        Self::CanvasZoomOut,
+        Self::CanvasUndo,
+        Self::CanvasRedo,
+        Self::ToggleCanvasShortcuts,
         Self::InsertTask,
         Self::ToggleEditorFold,
     ];
@@ -149,7 +163,9 @@ impl AppCommand {
             Self::FoldAll => "fold_all",
             Self::UnfoldAll => "unfold_all",
             Self::EditNote => "edit_note",
-            Self::CreateNote => "create_note",
+            // Keep the original identifier so existing user configurations
+            // continue to work after the action grows beyond Markdown notes.
+            Self::CreateDocument => "create_note",
             Self::CreateFolder => "create_folder",
             Self::DeleteItem => "delete_item",
             Self::RenameItem => "rename_item",
@@ -159,6 +175,13 @@ impl AppCommand {
             Self::SidebarSearch => "sidebar_search",
             Self::CycleSort => "cycle_sort",
             Self::ToggleEditorMode => "toggle_editor_mode",
+            Self::CanvasSelectLeft => "canvas_select_left",
+            Self::CanvasSelectRight => "canvas_select_right",
+            Self::CanvasZoomIn => "canvas_zoom_in",
+            Self::CanvasZoomOut => "canvas_zoom_out",
+            Self::CanvasUndo => "canvas_undo",
+            Self::CanvasRedo => "canvas_redo",
+            Self::ToggleCanvasShortcuts => "toggle_canvas_shortcuts",
             Self::InsertTask => "insert_task",
             Self::ToggleEditorFold => "toggle_editor_fold",
         }
@@ -207,7 +230,7 @@ impl AppCommand {
             Self::FoldAll => &["z shift+m"],
             Self::UnfoldAll => &["z shift+r"],
             Self::EditNote => &["e"],
-            Self::CreateNote => &["n"],
+            Self::CreateDocument => &["n"],
             Self::CreateFolder => &["shift+n"],
             Self::DeleteItem => &["d"],
             Self::RenameItem => &["r"],
@@ -217,6 +240,13 @@ impl AppCommand {
             Self::SidebarSearch => &["/"],
             Self::CycleSort => &["s"],
             Self::ToggleEditorMode => &["f6"],
+            Self::CanvasSelectLeft => &["shift+h"],
+            Self::CanvasSelectRight => &["shift+l"],
+            Self::CanvasZoomIn => &["z i"],
+            Self::CanvasZoomOut => &["z o"],
+            Self::CanvasUndo => &["u"],
+            Self::CanvasRedo => &["ctrl+r"],
+            Self::ToggleCanvasShortcuts => &["f3"],
             Self::InsertTask => &["ctrl+l"],
             Self::ToggleEditorFold => &["tab"],
         }
@@ -584,6 +614,21 @@ mod tests {
     }
 
     #[test]
+    fn canvas_history_and_footer_bindings_do_not_shadow_global_commands() {
+        let mut keymap = Keymap::default();
+        assert_eq!(keymap.resolve(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL), |_| true), KeyResolution::Command(AppCommand::ToggleZen));
+        assert_eq!(keymap.resolve(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL), |_| true), KeyResolution::Command(AppCommand::OpenTaskView));
+        assert_eq!(keymap.resolve(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE), |_| true), KeyResolution::Command(AppCommand::CanvasUndo));
+        assert_eq!(keymap.resolve(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL), |_| true), KeyResolution::Command(AppCommand::CanvasRedo));
+        assert_eq!(keymap.resolve(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE), |_| true), KeyResolution::Command(AppCommand::ToggleCanvasShortcuts));
+        assert_eq!(keymap.resolve(KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE), |_| true), KeyResolution::Command(AppCommand::HistoryBack));
+        assert_eq!(keymap.resolve(KeyEvent::new(KeyCode::Char('='), KeyModifiers::NONE), |_| true), KeyResolution::Command(AppCommand::HistoryForward));
+        assert_eq!(keymap.resolve(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::SHIFT), |_| true), KeyResolution::Command(AppCommand::CanvasSelectLeft));
+        assert_eq!(keymap.resolve(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE), |_| true), KeyResolution::Pending);
+        assert_eq!(keymap.resolve(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE), |_| true), KeyResolution::Command(AppCommand::CanvasZoomIn));
+    }
+
+    #[test]
     fn editor_commands_can_reuse_main_view_bindings() {
         let keymap = Keymap::default();
         assert_eq!(keymap.binding_label(AppCommand::InsertTask), "Ctrl+l");
@@ -641,7 +686,7 @@ mod tests {
     #[test]
     fn unavailable_sequences_do_not_capture_their_prefix() {
         let mut keymap = Keymap::default();
-        assert_eq!(keymap.resolve(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE), |command| !matches!(command, AppCommand::ToggleFold | AppCommand::FoldAll | AppCommand::UnfoldAll),), KeyResolution::NoMatch);
+        assert_eq!(keymap.resolve(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE), |command| !matches!(command, AppCommand::ToggleFold | AppCommand::FoldAll | AppCommand::UnfoldAll | AppCommand::CanvasZoomIn | AppCommand::CanvasZoomOut),), KeyResolution::NoMatch);
     }
 
     #[test]

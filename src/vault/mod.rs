@@ -49,6 +49,14 @@ impl VaultFileKind {
         }
     }
 
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Markdown => "Note",
+            Self::Base => "Base",
+            Self::Canvas => "Canvas",
+        }
+    }
+
     pub const fn is_markdown(self) -> bool {
         matches!(self, Self::Markdown)
     }

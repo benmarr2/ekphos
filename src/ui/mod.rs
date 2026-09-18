@@ -46,7 +46,7 @@ fn main_layout_constraints(zen_mode: bool, sidebar_collapsed: bool, outline_coll
 pub(crate) use content::content_item_click_col;
 pub use content::render_content;
 pub use dialogs::{
-    render_changelog_dialog, render_create_folder_dialog, render_create_note_dialog, render_create_note_in_folder_dialog, render_create_wiki_note_dialog, render_delete_confirm_dialog, render_delete_folder_confirm_dialog, render_directory_not_found_dialog, render_empty_directory_dialog,
+    render_changelog_dialog, render_create_document_dialog, render_create_folder_dialog, render_create_note_in_folder_dialog, render_create_wiki_note_dialog, render_delete_confirm_dialog, render_delete_folder_confirm_dialog, render_directory_not_found_dialog, render_empty_directory_dialog,
     render_help_dialog, render_keybinding_warning, render_onboarding_dialog, render_rename_folder_dialog, render_rename_note_dialog, render_unsaved_changes_dialog, render_welcome_dialog,
 };
 pub use outline::{render_outline, OutlineView};
@@ -89,7 +89,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     render_status_bar(f, app, vertical_chunks[1]);
     match app.state.dialog {
         DialogState::Onboarding => render_onboarding_dialog(f, app),
-        DialogState::CreateNote => render_create_note_dialog(f, app),
+        DialogState::CreateDocument(kind) => render_create_document_dialog(f, app, kind),
         DialogState::CreateFolder => render_create_folder_dialog(f, app),
         DialogState::CreateNoteInFolder => render_create_note_in_folder_dialog(f, app),
         DialogState::DeleteConfirm => render_delete_confirm_dialog(f, app),
@@ -641,11 +641,11 @@ mod tests {
     }
 
     #[test]
-    fn golden_create_note_dialog_72x22() {
+    fn golden_create_document_dialog_72x22() {
         let mut fixture = GoldenApp::new();
-        fixture.app.state.dialog = DialogState::CreateNote;
+        fixture.app.state.dialog = DialogState::CreateDocument(crate::vault::VaultFileKind::Markdown);
         fixture.app.state.input_buffer = "deterministic-note".to_string();
-        assert_eq!(fixture.hash(72, 22), 16_799_502_509_508_382_863);
+        assert_eq!(fixture.hash(72, 22), 9_240_068_141_463_981_098);
     }
 
     #[test]

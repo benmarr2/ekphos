@@ -453,14 +453,16 @@ impl App {
         }
     }
 
-    pub fn create_note(&mut self, name: &str) -> bool {
+    pub fn create_document(&mut self, name: &str, kind: crate::vault::VaultFileKind) -> bool {
         let name = name.trim();
+        let suffix = format!(".{}", kind.extension());
+        let name = name.strip_suffix(&suffix).unwrap_or(name).trim();
         if name.is_empty() {
-            self.state.dialog_error = Some("Note name cannot be empty".to_string());
+            self.state.dialog_error = Some("Document name cannot be empty".to_string());
             return false;
         }
         let parent_path = self.vault.target_folder.clone().unwrap_or_else(|| self.state.config.notes_path());
-        let file_path = match self.confined_child_path(&parent_path, name, Some("md")) {
+        let file_path = match self.confined_child_path(&parent_path, name, Some(kind.extension())) {
             Ok(path) => path,
             Err(error) => {
                 self.state.dialog_error = Some(error);
@@ -468,28 +470,31 @@ impl App {
             }
         };
         if file_path.exists() {
-            self.state.dialog_error = Some(format!("Note '{name}' already exists"));
+            self.state.dialog_error = Some(format!("{} '{name}' already exists", kind.display_name()));
             return false;
         }
-        let content = match crate::frontmatter_templates::initial_note_content(&self.state.config.frontmatter_templates, &self.dependencies.config_dir, &self.state.config.notes_path(), &file_path, name, self.dependencies.clock.today()) {
-            Ok(content) => content,
-            Err(error) => {
-                self.state.dialog_error = Some(error);
-                return false;
-            }
+        let content = match kind {
+            crate::vault::VaultFileKind::Markdown => match crate::frontmatter_templates::initial_note_content(&self.state.config.frontmatter_templates, &self.dependencies.config_dir, &self.state.config.notes_path(), &file_path, name, self.dependencies.clock.today()) {
+                Ok(content) => content,
+                Err(error) => {
+                    self.state.dialog_error = Some(error);
+                    return false;
+                }
+            },
+            crate::vault::VaultFileKind::Canvas => "{\n  \"nodes\": [],\n  \"edges\": []\n}\n".to_string(),
+            crate::vault::VaultFileKind::Base => "views:\n  - type: table\n    name: Table\n".to_string(),
         };
         if let Err(error) = crate::vault::save_note(&file_path, &content) {
-            self.state.dialog_error = Some(format!("Failed to create note: {error}"));
+            self.state.dialog_error = Some(format!("Unable to create {}: {error}", kind.display_name().to_ascii_lowercase()));
             return false;
         }
         if let Some(ref folder_path) = self.vault.target_folder {
             self.vault.folder_states.insert(folder_path.clone(), true);
         }
         self.load_notes_from_dir();
-        let name_owned = name.to_string();
         for (idx, item) in self.vault.sidebar_items.iter().enumerate() {
             if let SidebarItemKind::Note { note_id } = &item.kind {
-                if self.vault.notes.iter().any(|note| note.id == *note_id && note.title == name_owned) {
+                if self.vault.notes.iter().any(|note| note.id == *note_id && note.file_path.as_deref() == Some(file_path.as_path())) {
                     self.vault.selected_sidebar_index = idx;
                     self.vault.selected_note = self.note_index_for_id(*note_id).unwrap_or(0);
                     break;
@@ -503,6 +508,10 @@ impl App {
         self.state.dialog_error = None;
         self.vault.target_folder = None;
         true
+    }
+
+    pub fn create_note(&mut self, name: &str) -> bool {
+        self.create_document(name, crate::vault::VaultFileKind::Markdown)
     }
 
     pub fn create_folder(&mut self, name: &str) -> bool {
@@ -1133,6 +1142,42 @@ mod tests {
         assert_eq!(frontmatter.extra["created"].as_str(), Some("2026-09-10"));
         assert_eq!(frontmatter.extra["folder"].as_str(), Some("."));
         assert!(content.ends_with("# Manual\n\n"));
+    }
+
+    #[test]
+    fn dialog_creates_and_opens_valid_canvas_and_base_documents() {
+        let mut fixture = Fixture::new([]);
+
+        assert!(fixture.app.create_document("Ideas.canvas", crate::vault::VaultFileKind::Canvas));
+        let canvas_path = fixture.vault.join("Ideas.canvas");
+        let canvas_source = fs::read_to_string(&canvas_path).unwrap();
+        let (canvas, diagnostics) = crate::canvas::parse_canvas(&canvas_source).unwrap();
+        assert!(canvas.nodes.is_empty());
+        assert!(canvas.edges.is_empty());
+        assert!(diagnostics.is_empty());
+        assert_eq!(fixture.app.active_document_kind(), Some(crate::vault::VaultFileKind::Canvas));
+        assert_eq!(fixture.app.current_note().and_then(|note| note.file_path.as_deref()), Some(canvas_path.as_path()));
+
+        assert!(fixture.app.create_document("Projects.base", crate::vault::VaultFileKind::Base));
+        let base_path = fixture.vault.join("Projects.base");
+        let base_source = fs::read_to_string(&base_path).unwrap();
+        let base = crate::bases::parse_base(&base_source).unwrap();
+        assert_eq!(base.views.len(), 1);
+        assert_eq!(base.views[0].kind, "table");
+        assert_eq!(base.views[0].name, "Table");
+        assert_eq!(fixture.app.active_document_kind(), Some(crate::vault::VaultFileKind::Base));
+        assert_eq!(fixture.app.current_note().and_then(|note| note.file_path.as_deref()), Some(base_path.as_path()));
+    }
+
+    #[test]
+    fn structured_document_creation_reports_duplicates_without_overwriting() {
+        let mut fixture = Fixture::new([]);
+        let existing = "{\"nodes\":[],\"edges\":[],\"vendor\":true}\n";
+        fs::write(fixture.vault.join("Ideas.canvas"), existing).unwrap();
+
+        assert!(!fixture.app.create_document("Ideas", crate::vault::VaultFileKind::Canvas));
+        assert_eq!(fs::read_to_string(fixture.vault.join("Ideas.canvas")).unwrap(), existing);
+        assert_eq!(fixture.app.state.dialog_error.as_deref(), Some("Canvas 'Ideas' already exists"));
     }
 
     #[test]

@@ -60,7 +60,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
     HelpSection {
         title: "Sidebar",
         entries: &[
-            HelpEntry { commands: &[AppCommand::CreateNote], description: "Create note" },
+            HelpEntry { commands: &[AppCommand::CreateDocument], description: "Create document" },
             HelpEntry { commands: &[AppCommand::CreateFolder], description: "Create folder" },
             HelpEntry { commands: &[AppCommand::EditNote], description: "Edit note" },
             HelpEntry { commands: &[AppCommand::RenameItem], description: "Rename item" },
@@ -82,6 +82,15 @@ const HELP_SECTIONS: &[HelpSection] = &[
             HelpEntry { commands: &[AppCommand::ToggleFrontmatter], description: "Toggle frontmatter" },
             HelpEntry { commands: &[AppCommand::ToggleFold], description: "Toggle heading fold" },
             HelpEntry { commands: &[AppCommand::FoldAll, AppCommand::UnfoldAll], description: "Fold / unfold all headings" },
+        ],
+    },
+    HelpSection {
+        title: "Canvas",
+        entries: &[
+            HelpEntry { commands: &[AppCommand::CanvasSelectLeft, AppCommand::CanvasSelectRight], description: "Select card left / right" },
+            HelpEntry { commands: &[AppCommand::CanvasZoomIn, AppCommand::CanvasZoomOut], description: "Zoom Canvas in / out" },
+            HelpEntry { commands: &[AppCommand::CanvasUndo, AppCommand::CanvasRedo], description: "Undo / redo Canvas edit" },
+            HelpEntry { commands: &[AppCommand::ToggleCanvasShortcuts], description: "Show / hide Canvas shortcuts" },
         ],
     },
     HelpSection {
@@ -342,33 +351,41 @@ pub fn render_onboarding_dialog(f: &mut Frame, app: &App) {
     f.render_widget(dialog, dialog_area);
 }
 
-pub fn render_create_note_dialog(f: &mut Frame, app: &App) {
+pub fn render_create_document_dialog(f: &mut Frame, app: &App, kind: crate::vault::VaultFileKind) {
     let area = f.area();
     let theme = &app.state.theme;
     let has_context = app.vault.target_folder.is_some();
     let has_error = app.state.dialog_error.is_some();
-    let base_height = if has_context { 10 } else { 9 };
+    let base_height = if has_context { 12 } else { 11 };
     let dialog_height = if has_error { base_height + 2 } else { base_height };
-    let dialog_width = 50.min(area.width.saturating_sub(4));
+    let dialog_width = 62.min(area.width.saturating_sub(4));
     let dialog_height = dialog_height.min(area.height.saturating_sub(4));
     let dialog_area = Rect { x: (area.width.saturating_sub(dialog_width)) / 2, y: (area.height.saturating_sub(dialog_height)) / 2, width: dialog_width, height: dialog_height };
     f.render_widget(Clear, dialog_area);
-    let mut content = vec![Line::from(""), Line::from(Span::styled("Enter note name:", Style::default().fg(theme.foreground)))];
+    let mut type_spans = vec![Span::styled("Type: ", Style::default().fg(theme.foreground))];
+    for candidate in [crate::vault::VaultFileKind::Markdown, crate::vault::VaultFileKind::Canvas, crate::vault::VaultFileKind::Base] {
+        let style = if candidate == kind { Style::default().fg(theme.background).bg(theme.selection).add_modifier(Modifier::BOLD) } else { Style::default().fg(theme.muted) };
+        type_spans.push(Span::styled(format!(" {} ", candidate.display_name()), style));
+        type_spans.push(Span::raw(" "));
+    }
+    let mut content = vec![Line::from(""), Line::from(type_spans), Line::from(""), Line::from(Span::styled("Enter document name:", Style::default().fg(theme.foreground)))];
     if let Some(ref folder_path) = app.vault.target_folder {
         if let Some(folder_name) = folder_path.file_name() {
             content.push(Line::from(Span::styled(format!("in {}/", folder_name.to_string_lossy()), Style::default().fg(theme.info))));
         }
     }
     content.push(Line::from(""));
-    content.push(Line::from(vec![Span::styled("> ", Style::default().fg(theme.warning)), Span::styled(&app.state.input_buffer, Style::default().fg(theme.foreground)), Span::styled("█", Style::default().fg(theme.cursor))]));
+    let suffix = format!(".{}", kind.extension());
+    let shown_suffix = if app.state.input_buffer.trim_end().ends_with(&suffix) { String::new() } else { suffix };
+    content.push(Line::from(vec![Span::styled("> ", Style::default().fg(theme.warning)), Span::styled(&app.state.input_buffer, Style::default().fg(theme.foreground)), Span::styled("█", Style::default().fg(theme.cursor)), Span::styled(shown_suffix, Style::default().fg(theme.info))]));
     if let Some(ref error) = app.state.dialog_error {
         content.push(Line::from(""));
         content.push(Line::from(Span::styled(error.as_str(), Style::default().fg(theme.error))));
     }
     content.push(Line::from(""));
-    content.push(Line::from(Span::styled("Enter: Create  |  Esc: Cancel", Style::default().fg(theme.muted).add_modifier(Modifier::ITALIC))));
+    content.push(Line::from(Span::styled("Tab/←/→: Type  Enter: Create  Esc: Cancel", Style::default().fg(theme.muted).add_modifier(Modifier::ITALIC))));
     let border_color = if has_error { theme.error } else { theme.success };
-    let dialog = Paragraph::new(content).block(Block::default().title(" New Note ").borders(Borders::ALL).border_style(Style::default().fg(border_color)).style(Style::default().bg(theme.background))).alignment(Alignment::Center);
+    let dialog = Paragraph::new(content).block(Block::default().title(" New Document ").borders(Borders::ALL).border_style(Style::default().fg(border_color)).style(Style::default().bg(theme.background))).alignment(Alignment::Center);
     f.render_widget(dialog, dialog_area);
 }
 
@@ -570,12 +587,12 @@ pub fn render_empty_directory_dialog(f: &mut Frame, app: &App) {
     f.render_widget(Clear, dialog_area);
     let content = vec![
         Line::from(""),
-        Line::from(Span::styled("Oops! This directory seems empty", Style::default().fg(theme.warning).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled("This directory is empty", Style::default().fg(theme.warning).add_modifier(Modifier::BOLD))),
         Line::from(""),
-        Line::from(Span::styled("No markdown notes found in:", Style::default().fg(theme.foreground))),
+        Line::from(Span::styled("No supported documents found in:", Style::default().fg(theme.foreground))),
         Line::from(Span::styled(&app.state.config.notes_dir, Style::default().fg(theme.muted))),
         Line::from(""),
-        Line::from(Span::styled(format!("Press {} to create your first note!", app.state.keymap.binding_label(AppCommand::CreateNote)), Style::default().fg(theme.success))),
+        Line::from(Span::styled(format!("Press {} to create your first document", app.state.keymap.binding_label(AppCommand::CreateDocument)), Style::default().fg(theme.success))),
         Line::from(""),
         Line::from(Span::styled("Press Enter or Esc to continue", Style::default().fg(theme.muted).add_modifier(Modifier::ITALIC))),
     ];

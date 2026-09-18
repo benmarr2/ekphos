@@ -34,7 +34,7 @@ section of `~/.config/ekphos/config.toml`.
 
 - `j/k`: Navigate up/down
 - `e`: Enter edit mode
-- `n`: Create new note
+- `n`: Create a note, Canvas, or Base
 - `t`: Open today's journal
 - `/`: Search notes
 - `?`: Show help dialog
@@ -43,6 +43,12 @@ section of `~/.config/ekphos/config.toml`.
 - `Ctrl+z`: Toggle zen mode
 - `Ctrl+m`: Toggle frontmatter
 - `F6`: Switch between Standard and Vim editing
+
+Inside a Canvas, right-click to add or manage cards, or press `a` to open the
+add menu. Double-click empty space to create a text card. Drag cards to move
+them, drag empty space to pan, and use the visible handles to resize or connect.
+Press `F3` to expand the full shortcut legend; Canvas undo/redo use `u` and
+`Ctrl+r`, leaving global `Ctrl+z` zen mode and `Ctrl+y` Task View unchanged.
 
 New installations use Standard editing: type normally, select with `Shift` plus the arrow keys, press `Ctrl+s` to save, and press `Esc` to return to preview. `Ctrl+a/c/x/v/z/y/f` provide familiar select, clipboard, undo, redo, and find actions. Press `F1` while editing for the full reference.
 

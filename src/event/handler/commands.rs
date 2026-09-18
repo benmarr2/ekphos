@@ -3,8 +3,20 @@ use super::*;
 /// Returns true if the app should quit.
 pub(super) fn handle_normal_mode(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
     app.state.status_message = None; // Clear old status message on new keystroke
+    let idle_canvas = app.state.focus == Focus::Content && app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) && !app.canvas_editor_active() && !app.canvas_overlay_active() && !app.canvas_interaction_active();
+    if idle_canvas {
+        let available: Vec<_> = AppCommand::ALL.into_iter().filter(|command| app_command_available(app, *command)).collect();
+        match app.state.keymap.resolve(key, |command| available.contains(&command)) {
+            KeyResolution::Command(command) => return execute_app_command(app, command),
+            KeyResolution::Pending => return false,
+            KeyResolution::NoMatch => {}
+        }
+    }
     if handle_structured_document_key(app, key) {
         app.state.keymap.reset_pending();
+        return false;
+    }
+    if idle_canvas {
         return false;
     }
     let available: Vec<_> = AppCommand::ALL.into_iter().filter(|command| app_command_available(app, *command)).collect();
@@ -38,6 +50,67 @@ fn handle_structured_document_key(app: &mut App, key: crossterm::event::KeyEvent
             let shifted = key.modifiers.contains(KeyModifiers::SHIFT);
             let alt = key.modifiers.contains(KeyModifiers::ALT);
             let command_modifier = key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER);
+            if app.canvas_overlay_active() {
+                if command_modifier || alt {
+                    return false;
+                }
+                match &app.structured.canvas.overlay {
+                    crate::app::CanvasOverlay::Menu(_) => match key.code {
+                        KeyCode::Esc => {
+                            app.canvas_close_overlay();
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            app.canvas_menu_move_selection(-1);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            app.canvas_menu_move_selection(1);
+                        }
+                        KeyCode::Enter | KeyCode::Char(' ') => {
+                            app.canvas_activate_menu_selection();
+                        }
+                        KeyCode::Home => {
+                            if let crate::app::CanvasOverlay::Menu(menu) = &mut app.structured.canvas.overlay {
+                                menu.selected_index = 0;
+                            }
+                        }
+                        KeyCode::End => {
+                            if let crate::app::CanvasOverlay::Menu(menu) = &mut app.structured.canvas.overlay {
+                                menu.selected_index = menu.items.len().saturating_sub(1);
+                            }
+                        }
+                        _ => {}
+                    },
+                    crate::app::CanvasOverlay::FilePicker(_) => match key.code {
+                        KeyCode::Esc => {
+                            app.canvas_close_overlay();
+                        }
+                        KeyCode::Enter => {
+                            app.canvas_activate_file_picker_selection();
+                        }
+                        KeyCode::Up => {
+                            app.canvas_file_picker_move_selection(-1);
+                        }
+                        KeyCode::Down => {
+                            app.canvas_file_picker_move_selection(1);
+                        }
+                        KeyCode::PageUp => {
+                            app.canvas_file_picker_move_page(-1);
+                        }
+                        KeyCode::PageDown => {
+                            app.canvas_file_picker_move_page(1);
+                        }
+                        KeyCode::Backspace => {
+                            app.canvas_file_picker_pop_char();
+                        }
+                        KeyCode::Char(character) if !command_modifier && !alt => {
+                            app.canvas_file_picker_push_char(character);
+                        }
+                        _ => {}
+                    },
+                    crate::app::CanvasOverlay::None => {}
+                }
+                return true;
+            }
             if app.canvas_editor_active() {
                 let multiline = app.structured.canvas.editor.as_ref().is_some_and(|editor| editor.field.multiline());
                 match key.code {
@@ -96,26 +169,17 @@ fn handle_structured_document_key(app: &mut App, key: crossterm::event::KeyEvent
                         let mut encoded = [0; 4];
                         app.canvas_edit_insert(character.encode_utf8(&mut encoded));
                     }
+                    _ if command_modifier || alt => return false,
                     _ => {}
                 }
                 return true;
             }
             if command_modifier {
-                match key.code {
-                    KeyCode::Char('z' | 'Z') if shifted => {
-                        app.canvas_redo();
-                        return true;
-                    }
-                    KeyCode::Char('z') => {
-                        app.canvas_undo();
-                        return true;
-                    }
-                    KeyCode::Char('y') => {
-                        app.canvas_redo();
-                        return true;
-                    }
-                    _ => return false,
-                }
+                return false;
+            }
+            if shifted && key.code == KeyCode::F(10) {
+                app.canvas_open_selection_menu();
+                return true;
             }
             if alt {
                 match (shifted, key.code) {
@@ -156,29 +220,22 @@ fn handle_structured_document_key(app: &mut App, key: crossterm::event::KeyEvent
                 KeyCode::Right if shifted => app.canvas_pan(120.0, 0.0),
                 KeyCode::Up if shifted => app.canvas_pan(0.0, -120.0),
                 KeyCode::Down if shifted => app.canvas_pan(0.0, 120.0),
-                KeyCode::Left | KeyCode::Char('h') => app.canvas_move_selection(-1.0, 0.0),
-                KeyCode::Right | KeyCode::Char('l') => app.canvas_move_selection(1.0, 0.0),
-                KeyCode::Up | KeyCode::Char('k') => app.canvas_move_selection(0.0, -1.0),
-                KeyCode::Down | KeyCode::Char('j') => app.canvas_move_selection(0.0, 1.0),
-                KeyCode::Char('+') | KeyCode::Char('=') => app.canvas_zoom(1.2),
-                KeyCode::Char('-') | KeyCode::Char('_') => app.canvas_zoom(1.0 / 1.2),
                 KeyCode::Char('f') => app.canvas_fit(),
-                KeyCode::Char('c') => app.canvas_begin_connect(None, None),
-                KeyCode::Char('o') => {
-                    app.open_selected_canvas_node();
+                KeyCode::Char('a' | 'A') => {
+                    app.canvas_open_add_menu();
                 }
+                KeyCode::Char('c') => app.canvas_begin_connect(None, None),
                 KeyCode::Char('E') => app.enter_edit_mode(),
-                KeyCode::Char('[') => app.canvas_cycle_edge(-1),
-                KeyCode::Char(']') => app.canvas_cycle_edge(1),
                 KeyCode::Delete | KeyCode::Backspace | KeyCode::Char('x') => {
-                    app.canvas_delete_selected_edge();
+                    if app.structured.canvas.selected_edge.is_some() {
+                        app.canvas_delete_selected_edge();
+                    } else {
+                        app.canvas_delete_selected_node();
+                    }
                 }
                 KeyCode::Esc if app.structured.canvas.selected_edge.is_some() => {
                     app.structured.canvas.selected_edge = None;
                     app.state.status_message = Some("Connection deselected".to_string());
-                }
-                KeyCode::Enter if app.structured.canvas.selected_edge.is_some() => {
-                    app.state.status_message = Some("Press Delete to detach this connection".to_string());
                 }
                 _ => return false,
             }
@@ -191,8 +248,11 @@ fn handle_structured_document_key(app: &mut App, key: crossterm::event::KeyEvent
 pub(super) fn app_command_available(app: &App, command: AppCommand) -> bool {
     match command {
         AppCommand::InsertTask | AppCommand::ToggleEditorFold => false,
+        AppCommand::CanvasSelectLeft | AppCommand::CanvasSelectRight | AppCommand::CanvasZoomIn | AppCommand::CanvasZoomOut | AppCommand::CanvasUndo | AppCommand::CanvasRedo | AppCommand::ToggleCanvasShortcuts => {
+            app.state.focus == Focus::Content && app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) && !app.canvas_editor_active() && !app.canvas_overlay_active() && !app.canvas_interaction_active()
+        }
         AppCommand::FocusNext | AppCommand::FocusPrevious => !app.state.zen_mode,
-        AppCommand::OpenJournal | AppCommand::CreateNote | AppCommand::CreateFolder | AppCommand::DeleteItem | AppCommand::RenameItem => !app.state.zen_mode,
+        AppCommand::OpenJournal | AppCommand::CreateDocument | AppCommand::CreateFolder | AppCommand::DeleteItem | AppCommand::RenameItem => !app.state.zen_mode,
         AppCommand::CutItem => !app.state.zen_mode && app.state.focus == Focus::Sidebar,
         AppCommand::PasteItem => !app.state.zen_mode && app.state.focus == Focus::Sidebar && app.vault.cut_buffer.is_some(),
         AppCommand::HistoryBack | AppCommand::HistoryForward => app.state.focus != Focus::Sidebar,
@@ -217,7 +277,7 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
             app.enter_edit_mode();
             update_cursor_style(app);
         }
-        AppCommand::CreateNote => {
+        AppCommand::CreateDocument => {
             app.state.input_buffer.clear();
             app.state.dialog_error = None;
             let context_folder = app.get_current_context_folder();
@@ -226,7 +286,7 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
             } else {
                 app.vault.target_folder = None;
             }
-            app.state.dialog = DialogState::CreateNote;
+            app.state.dialog = DialogState::CreateDocument(crate::vault::VaultFileKind::Markdown);
         }
         AppCommand::CreateFolder => {
             app.state.input_buffer.clear();
@@ -327,7 +387,11 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
                 if app.active_document_kind() == Some(crate::vault::VaultFileKind::Base) {
                     app.open_selected_base_row();
                 } else if app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) {
-                    app.canvas_activate_selected_node();
+                    if app.structured.canvas.selected_edge.is_some() {
+                        app.state.status_message = Some("Press Delete to detach this connection".to_string());
+                    } else {
+                        app.canvas_activate_selected_node();
+                    }
                 } else if !open_selected_content_target(app) {
                     app.open_current_image();
                 }
@@ -347,7 +411,7 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
                 if app.active_document_kind() == Some(crate::vault::VaultFileKind::Base) {
                     app.open_selected_base_row();
                 } else if app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) {
-                    app.canvas_activate_selected_node();
+                    app.open_selected_canvas_node();
                 } else if !open_selected_content_target(app) {
                     app.open_current_image();
                 }
@@ -366,11 +430,26 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
                 switch_editing_mode(app);
             }
         }
+        AppCommand::CanvasSelectLeft => app.canvas_move_selection(-1.0, 0.0),
+        AppCommand::CanvasSelectRight => app.canvas_move_selection(1.0, 0.0),
+        AppCommand::CanvasZoomIn => app.canvas_zoom(1.2),
+        AppCommand::CanvasZoomOut => app.canvas_zoom(1.0 / 1.2),
+        AppCommand::CanvasUndo => {
+            app.canvas_undo();
+        }
+        AppCommand::CanvasRedo => {
+            app.canvas_redo();
+        }
+        AppCommand::ToggleCanvasShortcuts => app.canvas_toggle_shortcuts(),
         AppCommand::ContentAction => {
             if app.active_document_kind() == Some(crate::vault::VaultFileKind::Base) {
                 app.open_selected_base_row();
             } else if app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) {
-                app.canvas_activate_selected_node();
+                if app.structured.canvas.selected_edge.is_some() {
+                    app.state.status_message = Some("Press Delete to detach this connection".to_string());
+                } else {
+                    app.canvas_activate_selected_node();
+                }
             } else if let Some(crate::app::ContentItem::TaskItem { .. }) = app.document.content_items.get(app.document.content_cursor) {
                 if app.is_task_checkbox_selected() || !open_selected_content_target(app) {
                     app.toggle_current_task();
@@ -383,8 +462,20 @@ pub(super) fn execute_app_command(app: &mut App, command: AppCommand) -> bool {
                 open_selected_content_target(app);
             }
         }
-        AppCommand::NextTarget => app.next_link(),
-        AppCommand::PreviousTarget => app.previous_link(),
+        AppCommand::NextTarget => {
+            if app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) {
+                app.canvas_cycle_edge(1);
+            } else {
+                app.next_link();
+            }
+        }
+        AppCommand::PreviousTarget => {
+            if app.active_document_kind() == Some(crate::vault::VaultFileKind::Canvas) {
+                app.canvas_cycle_edge(-1);
+            } else {
+                app.previous_link();
+            }
+        }
         AppCommand::ToggleFloatingCursor => app.toggle_floating_cursor(),
         AppCommand::ToggleSidebar => app.toggle_sidebar_collapsed(),
         AppCommand::HalfPageDown => {
