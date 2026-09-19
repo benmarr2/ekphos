@@ -1,6 +1,61 @@
 use super::*;
 
 impl Editor {
+    /// Indent the current Markdown list item as a whole, keeping the marker and
+    /// body together. Returns `false` when the current line is not a list item.
+    pub fn indent_current_list_item(&mut self) -> bool {
+        if self.has_selection() {
+            return false;
+        }
+        let cursor_before = self.cursor.pos();
+        let Some(line) = self.buffer.line(cursor_before.row) else {
+            return false;
+        };
+        if self.is_frontmatter_row(cursor_before.row) || self.is_fenced_code_row(cursor_before.row) || ListPrefix::detect(line).is_none() {
+            return false;
+        }
+
+        self.buffer.insert_char(cursor_before.row, 0, '\t');
+        self.reconcile_fold_anchors();
+        self.wrap_cache.invalidate_line(cursor_before.row);
+        self.update_row_highlights(cursor_before.row);
+        let cursor_after = Position::new(cursor_before.row, cursor_before.col + 1);
+        self.history.record(EditOperation::Insert { pos: Position::new(cursor_before.row, 0), text: "\t".to_string() }, cursor_before, cursor_after);
+        self.cursor.move_to(cursor_after.row, cursor_after.col);
+        self.ensure_cursor_visible();
+        true
+    }
+
+    /// Outdent the current Markdown list item by one level. A leading tab is
+    /// one level; space-indented items lose up to the configured tab width.
+    pub fn outdent_current_list_item(&mut self) -> bool {
+        if self.has_selection() {
+            return false;
+        }
+        let cursor_before = self.cursor.pos();
+        let Some(line) = self.buffer.line(cursor_before.row) else {
+            return false;
+        };
+        if self.is_frontmatter_row(cursor_before.row) || self.is_fenced_code_row(cursor_before.row) || ListPrefix::detect(line).is_none() {
+            return false;
+        }
+
+        let remove_len = if line.starts_with('\t') { 1 } else { line.chars().take(self.tab_width as usize).take_while(|character| *character == ' ').count() };
+        if remove_len == 0 {
+            return false;
+        }
+
+        let deleted_text = self.buffer.delete_range(cursor_before.row, 0, remove_len);
+        self.reconcile_fold_anchors();
+        self.wrap_cache.invalidate_line(cursor_before.row);
+        self.update_row_highlights(cursor_before.row);
+        let cursor_after = Position::new(cursor_before.row, cursor_before.col.saturating_sub(remove_len));
+        self.history.record(EditOperation::Delete { start: Position::new(cursor_before.row, 0), end: Position::new(cursor_before.row, remove_len), deleted_text }, cursor_before, cursor_after);
+        self.cursor.move_to(cursor_after.row, cursor_after.col);
+        self.ensure_cursor_visible();
+        true
+    }
+
     /// Turn the current plain, unordered-list, or checklist line into a managed
     /// task. New checkboxes are unchecked; an existing checklist keeps its
     /// state. Existing managed tasks and non-text Markdown blocks are unchanged.

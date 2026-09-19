@@ -47,6 +47,13 @@ pub(super) fn handle_standard_mode(app: &mut App, key: crossterm::event::KeyEven
             app.editor.delete_selection();
             app.update_editor_highlights();
         }
+        KeyCode::Tab if key.modifiers.is_empty() && app.editor.indent_current_list_item() => {}
+        KeyCode::BackTab if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) => {
+            app.editor.outdent_current_list_item();
+        }
+        KeyCode::Tab if key.modifiers == KeyModifiers::SHIFT => {
+            app.editor.outdent_current_list_item();
+        }
         KeyCode::Char(_) if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) => {}
         KeyCode::Backspace | KeyCode::Delete if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) => {}
         KeyCode::Tab if !key.modifiers.is_empty() => {}
@@ -235,6 +242,32 @@ mod tests {
         fixture.app.editor.set_cursor(3, 0);
         handle_edit_mode(&mut fixture.app, key(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(fixture.app.editor.line(3), Some("\tplain"));
+    }
+
+    #[test]
+    fn tab_and_shift_tab_change_the_current_list_item_level() {
+        let mut fixture = StandardApp::new();
+        fixture.app.editor.select_all();
+        fixture.app.editor.insert_str("- first\n- second\n1. ordered\n- [ ] task");
+
+        fixture.app.editor.set_cursor(1, 5);
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(fixture.app.editor.line(1), Some("\t- second"));
+        assert_eq!(fixture.app.editor.cursor(), (1, 6));
+
+        handle_edit_mode(&mut fixture.app, key(KeyCode::BackTab, KeyModifiers::SHIFT));
+        assert_eq!(fixture.app.editor.line(1), Some("- second"));
+        assert_eq!(fixture.app.editor.cursor(), (1, 5));
+
+        fixture.app.editor.set_cursor(2, 4);
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(fixture.app.editor.line(2), Some("\t1. ordered"));
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Tab, KeyModifiers::SHIFT));
+        assert_eq!(fixture.app.editor.line(2), Some("1. ordered"));
+
+        fixture.app.editor.set_cursor(3, 6);
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(fixture.app.editor.line(3), Some("\t- [ ] task"));
     }
 
     #[test]

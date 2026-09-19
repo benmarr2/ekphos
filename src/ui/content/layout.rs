@@ -75,16 +75,17 @@ pub fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
         scratch.item_text_heights.clear();
         scratch.item_text_heights.extend(app.document.content_items.iter().enumerate().map(|(idx, item)| match item {
             ContentItem::TextLine { range, .. } => {
-                let line = document.slice(*range);
+                let line = normalize_whitespace(document.slice(*range));
+                let (prose_source, prefix_len) = unordered_list_parts(&line).map_or((line.as_str(), 4), |(indent, body)| (body, 4 + indent.len()));
                 if app.inline_image_count_at(idx) == 0 {
-                    calc_wrapped_height(&inline_math_layout_source(line, &inline_math[idx]), 4)
+                    calc_wrapped_height(&inline_math_layout_source(prose_source, &inline_math[idx]), prefix_len)
                 } else {
-                    let prose_source = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")).or_else(|| line.strip_prefix("> ")).unwrap_or(line);
+                    let prose_source = prose_source.strip_prefix("> ").unwrap_or(prose_source);
                     let prose = inline_prose_text_with_math(prose_source, theme, &inline_math[idx]);
                     if prose.is_empty() {
                         0
                     } else {
-                        calc_wrapped_height(&prose, 4)
+                        calc_wrapped_height(&prose, prefix_len)
                     }
                 }
             }
@@ -334,9 +335,11 @@ pub fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
                 let text = app.document_slice(*text);
                 let selected_link = if is_cursor_line { app.document.selected_link_index } else { 0 };
                 let has_links = !app.item_all_links_at(item_idx).is_empty();
+                let has_next_sibling = task_has_next_sibling(&app.document.content_items, item_idx, *indent);
                 let wiki_validator = |target: &str| app.wiki_link_exists(target);
                 let context = RenderContext::new(&app.state.theme, chunks[chunk_idx], is_cursor_line, selected_link, has_links);
-                let placements = render_task_item(f, text, *checked, *indent as usize, context, Some(wiki_validator), &inline_math[item_idx]);
+                let task = TaskItemRenderState { checked: *checked, indent: *indent as usize, has_next_sibling };
+                let placements = render_task_item(f, text, task, context, Some(wiki_validator), &inline_math[item_idx]);
                 render_inline_math(f, app, item_idx, &inline_math[item_idx], &placements, inner_area);
                 if !skip_images && app.inline_image_count_at(item_idx) > 0 {
                     let text_height = item_text_heights[item_idx];
@@ -375,6 +378,21 @@ pub fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
     }
     app.document.content_render_scratch = scratch;
     app.finish_image_frame();
+}
+
+fn task_has_next_sibling(items: &[ContentItem], item_index: usize, indent: u16) -> bool {
+    for item in items.iter().skip(item_index + 1) {
+        let ContentItem::TaskItem { indent: next_indent, .. } = item else {
+            return false;
+        };
+        if *next_indent < indent {
+            return false;
+        }
+        if *next_indent == indent {
+            return true;
+        }
+    }
+    false
 }
 fn visible_code_block_highlights(app: &mut App, visible_indices: &[usize]) -> std::collections::HashMap<usize, Vec<Span<'static>>> {
     let mut blocks = Vec::new();

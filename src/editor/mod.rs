@@ -720,6 +720,57 @@ mod tests {
     }
 
     #[test]
+    fn list_item_indent_moves_unordered_ordered_and_task_markers() {
+        let originals = ["- unordered", "12. ordered", "* [ ] checklist", "+ [x] #task managed"];
+        let mut editor = Editor::new(originals.iter().map(|line| (*line).to_string()).collect());
+
+        for (row, original) in originals.iter().enumerate() {
+            let original_col = original.chars().count();
+            editor.set_cursor(row, original_col);
+            assert!(editor.indent_current_list_item());
+            assert_eq!(editor.line(row), Some(format!("\t{original}").as_str()));
+            assert_eq!(editor.cursor(), (row, original_col + 1));
+
+            assert!(editor.outdent_current_list_item());
+            assert_eq!(editor.line(row), Some(*original));
+            assert_eq!(editor.cursor(), (row, original_col));
+        }
+    }
+
+    #[test]
+    fn list_item_outdent_removes_one_space_based_level() {
+        let mut editor = Editor::new(vec!["  - two spaces".into(), "      3. six spaces".into()]);
+
+        editor.set_cursor(0, 5);
+        assert!(editor.outdent_current_list_item());
+        assert_eq!(editor.line(0), Some("- two spaces"));
+        assert_eq!(editor.cursor(), (0, 3));
+
+        editor.set_cursor(1, 10);
+        assert!(editor.outdent_current_list_item());
+        assert_eq!(editor.line(1), Some("  3. six spaces"));
+        assert_eq!(editor.cursor(), (1, 6));
+    }
+
+    #[test]
+    fn list_item_indent_is_undoable_and_skips_non_markdown_list_rows() {
+        let mut editor = Editor::new(vec!["- item".into(), "plain".into(), "```".into(), "- code".into(), "```".into()]);
+        editor.set_cursor(0, 4);
+        assert!(editor.indent_current_list_item());
+        assert_eq!(editor.line(0), Some("\t- item"));
+        assert!(editor.undo());
+        assert_eq!(editor.line(0), Some("- item"));
+        assert_eq!(editor.cursor(), (0, 4));
+        assert!(editor.redo());
+        assert_eq!(editor.line(0), Some("\t- item"));
+
+        editor.set_cursor(1, 0);
+        assert!(!editor.indent_current_list_item());
+        editor.set_cursor(3, 0);
+        assert!(!editor.indent_current_list_item());
+    }
+
+    #[test]
     fn task_shortcut_ignores_frontmatter_code_and_block_lines() {
         let mut editor = Editor::new(vec!["---".into(), "title: note".into(), "---".into(), "```markdown".into(), "code".into(), "```".into(), "# Heading".into(), "> quote".into(), "1. ordered".into()]);
         for row in 0..editor.line_count() {

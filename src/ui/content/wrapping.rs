@@ -205,8 +205,12 @@ pub(crate) fn content_item_click_col(app: &App, index: usize, item_area: Rect, m
             let raw_line = app.document_slice(*range);
             let line = normalize_whitespace(raw_line);
             let math_states = inline_math_states_for_click(app, index, &line);
-            let mut spans = if let Some(text) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
-                let mut spans = vec![Span::styled(cursor_indicator, Style::default()), Span::styled("• ", Style::default())];
+            let mut spans = if let Some((indent, text)) = unordered_list_parts(&line) {
+                let mut spans = vec![Span::styled(cursor_indicator, Style::default())];
+                if !indent.is_empty() {
+                    spans.push(Span::styled(indent.to_string(), Style::default()));
+                }
+                spans.push(Span::styled("• ", Style::default()));
                 spans.extend(parse_inline_formatting_with_math::<fn(&str) -> bool>(text, &app.state.theme, None, None, &math_states));
                 spans
             } else if let Some(text) = line.strip_prefix("> ") {
@@ -486,4 +490,14 @@ pub(super) fn normalize_whitespace(text: &str) -> String {
         }
     }
     result
+}
+
+/// Split a normalized unordered-list line into its indentation and body.
+/// Markdown accepts `-`, `*`, and `+`; indentation must not stop the preview
+/// from rendering the marker as a bullet.
+pub(super) fn unordered_list_parts(line: &str) -> Option<(&str, &str)> {
+    let trimmed = line.trim_start_matches(' ');
+    let indent_len = line.len() - trimmed.len();
+    let body = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")).or_else(|| trimmed.strip_prefix("+ "))?;
+    Some((&line[..indent_len], body))
 }

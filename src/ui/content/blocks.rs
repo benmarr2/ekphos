@@ -54,10 +54,14 @@ where
         Line::from(vec![Span::styled(cursor_indicator, Style::default().fg(theme.warning)), fold_indicator(fold_state, content_theme.heading2), Span::styled(line.trim_start_matches("## "), Style::default().fg(content_theme.heading2).add_modifier(Modifier::BOLD))])
     } else if line.starts_with("# ") {
         Line::from(vec![Span::styled(cursor_indicator, Style::default().fg(theme.warning)), fold_indicator(fold_state, content_theme.heading1), Span::styled(line.trim_start_matches("# ").to_uppercase(), Style::default().fg(content_theme.heading1).add_modifier(Modifier::BOLD))])
-    } else if line.starts_with("- ") {
+    } else if let Some((indent, body)) = unordered_list_parts(line) {
         let selected = if is_cursor { Some(selected_link) } else { None };
-        let mut spans = vec![Span::styled(cursor_indicator, Style::default().fg(theme.warning)), Span::styled("• ", Style::default().fg(content_theme.list_marker))];
-        spans.extend(parse_inline_formatting_with_math(line.trim_start_matches("- "), theme, selected, wiki_link_validator, math_states));
+        let mut spans = vec![Span::styled(cursor_indicator, Style::default().fg(theme.warning))];
+        if !indent.is_empty() {
+            spans.push(Span::styled(indent.to_string(), Style::default()));
+        }
+        spans.push(Span::styled("• ", Style::default().fg(content_theme.list_marker)));
+        spans.extend(parse_inline_formatting_with_math(body, theme, selected, wiki_link_validator, math_states));
         Line::from(spans)
     } else if line.starts_with("> ") {
         let selected = if is_cursor { Some(selected_link) } else { None };
@@ -75,11 +79,6 @@ where
     } else if line == "---" || line == "***" || line == "___" {
         let hr_width = available_width.saturating_sub(2);
         Line::from(vec![Span::styled(cursor_indicator, Style::default().fg(theme.warning)), Span::styled("─".repeat(hr_width), Style::default().fg(theme.border))])
-    } else if line.starts_with("* ") {
-        let selected = if is_cursor { Some(selected_link) } else { None };
-        let mut spans = vec![Span::styled(cursor_indicator, Style::default().fg(theme.warning)), Span::styled("• ", Style::default().fg(content_theme.list_marker))];
-        spans.extend(parse_inline_formatting_with_math(line.trim_start_matches("* "), theme, selected, wiki_link_validator, math_states));
-        Line::from(spans)
     } else {
         let selected = if is_cursor { Some(selected_link) } else { None };
         let mut spans = vec![Span::styled(cursor_indicator, Style::default().fg(theme.warning))];
@@ -137,10 +136,17 @@ pub(super) fn render_code_fence(f: &mut Frame, theme: &Theme, _lang: &str, area:
     f.render_widget(paragraph, area);
 }
 
-pub(super) fn render_task_item<F>(f: &mut Frame, text: &str, checked: bool, indent: usize, context: RenderContext<'_>, wiki_link_validator: Option<F>, math_states: &[InlineMathRenderState]) -> Vec<InlineMathPlacement>
+pub(super) struct TaskItemRenderState {
+    pub(super) checked: bool,
+    pub(super) indent: usize,
+    pub(super) has_next_sibling: bool,
+}
+
+pub(super) fn render_task_item<F>(f: &mut Frame, text: &str, task: TaskItemRenderState, context: RenderContext<'_>, wiki_link_validator: Option<F>, math_states: &[InlineMathRenderState]) -> Vec<InlineMathPlacement>
 where
     F: Fn(&str) -> bool,
 {
+    let TaskItemRenderState { checked, indent, has_next_sibling } = task;
     let RenderContext { theme, area, is_cursor, selected_link, has_link: has_links } = context;
     let cursor_indicator = if is_cursor { "▶ " } else { "  " };
     let checkbox_selected = is_cursor && has_links && selected_link == 0;
@@ -175,7 +181,7 @@ where
     let bracket_style = if checkbox_selected { Style::default().fg(theme.background).bg(theme.warning) } else { Style::default().fg(checkbox_color) };
     let mut spans = vec![Span::styled(cursor_indicator, Style::default().fg(theme.warning))];
     if indent > 0 {
-        spans.push(Span::styled(" ".repeat(indent), Style::default()));
+        spans.push(Span::styled(task_tree_prefix(indent, has_next_sibling), Style::default().fg(theme.border)));
     }
     spans.extend([Span::styled("[", bracket_style), Span::styled(if checked { "x" } else { " " }, checkbox_style), Span::styled("]", bracket_style), Span::styled(" ", Style::default())]);
     spans.extend(text_spans);
@@ -190,6 +196,22 @@ where
         }
     }
     placements
+}
+
+/// Build a branch connector with the same display width as the Markdown
+/// indentation it replaces, so checkbox hit-testing and link columns do not
+/// move when tree lines are shown.
+pub(super) fn task_tree_prefix(indent: usize, has_next_sibling: bool) -> String {
+    if indent == 0 {
+        return String::new();
+    }
+    let branch = if has_next_sibling { '├' } else { '└' };
+    match indent {
+        1 => branch.to_string(),
+        2 => format!("{branch}─"),
+        3 => format!("{branch}──"),
+        _ => format!("{}{branch}── ", " ".repeat(indent - 4)),
+    }
 }
 
 fn extract_inline_math_placements(lines: &mut [Line<'_>], states: &[InlineMathRenderState], area: Rect) -> Vec<InlineMathPlacement> {

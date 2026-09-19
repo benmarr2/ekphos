@@ -259,6 +259,41 @@ mod tests {
         assert_eq!(fixture.hash(80, 24), 15_822_003_958_405_314_542);
     }
 
+    #[test]
+    fn preview_formats_nested_unordered_markers_as_bullets() {
+        let mut fixture = GoldenApp::with_content("- parent\n\t- tab child\n    * space child\n\t+ plus child\n");
+        let buffer = draw(&mut fixture, 100, 20);
+        let content = (0..buffer.area.height).map(|y| row_text(&buffer, y)).collect::<Vec<_>>().join("\n");
+
+        assert!(content.contains("• parent"), "{content}");
+        assert!(content.contains("    • tab child"), "{content}");
+        assert!(content.contains("    • space child"), "{content}");
+        assert!(content.contains("    • plus child"), "{content}");
+        assert!(!content.contains("- tab child"), "{content}");
+    }
+
+    #[test]
+    fn preview_connects_only_nested_tasks_and_keeps_them_toggleable() {
+        let mut fixture = GoldenApp::with_content("- [ ] parent\n    - [ ] first child\n    - [ ] second child\n        - [ ] grandchild\n");
+        let buffer = draw(&mut fixture, 100, 20);
+        let content = (0..buffer.area.height).map(|y| row_text(&buffer, y)).collect::<Vec<_>>().join("\n");
+
+        assert!(content.contains("[ ] parent"), "{content}");
+        assert!(content.contains("├── [ ] first child"), "{content}");
+        assert!(content.contains("└── [ ] second child"), "{content}");
+        assert!(content.contains("    └── [ ] grandchild"), "{content}");
+        assert!(!content.contains("└── [ ] parent"), "{content}");
+
+        let content_x = fixture.app.state.content_area.x;
+        assert!(fixture.app.is_click_on_task_checkbox(1, content_x + 6, content_x));
+        let note_path = fixture.root.join("vault").join("fixture.md");
+        if let Some(note) = fixture.app.vault.notes.first_mut() {
+            note.file_path = Some(note_path);
+        }
+        fixture.app.toggle_task_at(1);
+        assert!(fixture.app.document.content_items.get(1).is_some_and(|item| matches!(item, crate::app::ContentItem::TaskItem { checked: true, .. })));
+    }
+
     fn flat_fixture() -> GoldenApp {
         let mut fixture = GoldenApp::new();
         fixture.app.state.config.style = crate::config::StyleMode::Flat;
