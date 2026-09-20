@@ -37,13 +37,24 @@ impl Editor {
     {
         self.wiki_link_ranges.clear();
         let mut in_code_block = false;
+        let mut math_block = None;
         let active_rows = self.active_highlight_rows();
         for (row, line) in self.buffer.iter_lines().take(active_rows.end).enumerate() {
+            if math_block.is_some() {
+                crate::core::markdown::update_display_math_block(&mut math_block, line, |_| false);
+                continue;
+            }
             if line.trim_start().starts_with("```") {
                 in_code_block = !in_code_block;
                 continue;
             }
-            if in_code_block || !active_rows.contains(&row) {
+            if in_code_block {
+                continue;
+            }
+            if crate::core::markdown::update_display_math_block(&mut math_block, line, |opening| self.has_matching_math_closer(row, opening)) {
+                continue;
+            }
+            if !active_rows.contains(&row) {
                 continue;
             }
             for link in crate::core::markdown::wiki_links(line) {
@@ -171,7 +182,7 @@ impl Editor {
         let active_rows = self.active_highlight_rows();
         self.code_block_rows.retain(|row| active_rows.contains(row));
         let mut in_code_block = false;
-        let mut in_math_block = false;
+        let mut math_block = None;
         self.frontmatter_end = self.detect_frontmatter_end();
         for row in 0..active_rows.end {
             let line = self.buffer.line(row).unwrap_or("");
@@ -182,6 +193,13 @@ impl Editor {
                     }
                     continue;
                 }
+            }
+            if math_block.is_some() {
+                crate::core::markdown::update_display_math_block(&mut math_block, line, |_| false);
+                if active_rows.contains(&row) {
+                    self.highlight_index.insert(HighlightRange::new(row, 0, line.chars().count(), Style::default().fg(self.link_color).add_modifier(Modifier::ITALIC), HighlightType::Math).with_priority(2));
+                }
+                continue;
             }
             if line.trim_start().starts_with("```") {
                 in_code_block = !in_code_block;
@@ -200,14 +218,7 @@ impl Editor {
                 }
                 continue;
             }
-            if crate::core::markdown::is_display_math_delimiter(line) {
-                in_math_block = !in_math_block;
-                if active_rows.contains(&row) {
-                    self.highlight_index.insert(HighlightRange::new(row, 0, line.chars().count(), Style::default().fg(self.link_color).add_modifier(Modifier::ITALIC), HighlightType::Math).with_priority(2));
-                }
-                continue;
-            }
-            if in_math_block {
+            if crate::core::markdown::update_display_math_block(&mut math_block, line, |opening| self.has_matching_math_closer(row, opening)) {
                 if active_rows.contains(&row) {
                     self.highlight_index.insert(HighlightRange::new(row, 0, line.chars().count(), Style::default().fg(self.link_color).add_modifier(Modifier::ITALIC), HighlightType::Math).with_priority(2));
                 }
@@ -242,6 +253,12 @@ impl Editor {
                 return;
             }
         }
+        let mut math_block = self.math_block_state(row);
+        if math_block.is_some() {
+            crate::core::markdown::update_display_math_block(&mut math_block, &line, |_| false);
+            self.highlight_index.insert(HighlightRange::new(row, 0, line.chars().count(), Style::default().fg(self.link_color).add_modifier(Modifier::ITALIC), HighlightType::Math).with_priority(2));
+            return;
+        }
         let is_code_fence = line.trim_start().starts_with("```");
         let was_in_code_block = self.code_block_rows.contains(&row);
         if is_code_fence {
@@ -259,7 +276,7 @@ impl Editor {
             self.highlight_index.insert(HighlightRange::new(row, 0, line.chars().count(), Style::default().fg(self.code_color), HighlightType::CodeBlock));
             return;
         }
-        if crate::core::markdown::is_display_math_delimiter(&line) || self.is_in_math_block(row) {
+        if crate::core::markdown::update_display_math_block(&mut math_block, &line, |opening| self.has_matching_math_closer(row, opening)) {
             self.highlight_index.insert(HighlightRange::new(row, 0, line.chars().count(), Style::default().fg(self.link_color).add_modifier(Modifier::ITALIC), HighlightType::Math).with_priority(2));
             return;
         }
@@ -268,30 +285,46 @@ impl Editor {
     }
     pub(super) fn is_in_code_block(&self, row: usize) -> bool {
         let mut in_block = false;
+        let mut math_block = None;
         for r in 0..=row {
             if let Some(line) = self.buffer.line(r) {
+                if math_block.is_some() {
+                    crate::core::markdown::update_display_math_block(&mut math_block, line, |_| false);
+                    continue;
+                }
                 if line.trim_start().starts_with("```") {
                     in_block = !in_block;
+                    continue;
+                }
+                if !in_block {
+                    crate::core::markdown::update_display_math_block(&mut math_block, line, |opening| self.has_matching_math_closer(r, opening));
                 }
             }
         }
         in_block
     }
-    pub(super) fn is_in_math_block(&self, row: usize) -> bool {
-        let mut in_block = false;
+    fn has_matching_math_closer(&self, row: usize, opening: crate::core::markdown::DisplayMathDelimiter) -> bool {
+        crate::core::markdown::find_display_math_closing_line(opening, self.buffer.iter_lines().enumerate().skip(row + 1)).is_some()
+    }
+    fn math_block_state(&self, row: usize) -> Option<crate::core::markdown::DisplayMathDelimiter> {
+        let mut block = None;
         let mut in_code_block = false;
         for source_row in 0..row {
             if let Some(line) = self.buffer.line(source_row) {
+                if block.is_some() {
+                    crate::core::markdown::update_display_math_block(&mut block, line, |_| false);
+                    continue;
+                }
                 if line.trim_start().starts_with("```") {
                     in_code_block = !in_code_block;
                     continue;
                 }
-                if !in_code_block && crate::core::markdown::is_display_math_delimiter(line) {
-                    in_block = !in_block;
+                if !in_code_block {
+                    crate::core::markdown::update_display_math_block(&mut block, line, |opening| self.has_matching_math_closer(source_row, opening));
                 }
             }
         }
-        in_block
+        block
     }
     pub(super) fn recalc_code_blocks_from(&mut self, start_row: usize) {
         let active_rows = self.active_highlight_rows();
@@ -301,7 +334,7 @@ impl Editor {
             return;
         }
         let mut in_code_block = if start_row > 0 { self.is_in_code_block(start_row - 1) } else { false };
-        let mut in_math_block = if start_row > 0 { self.is_in_math_block(start_row) } else { false };
+        let mut math_block = if start_row > 0 { self.math_block_state(start_row) } else { None };
         for row in start_row..active_rows.end {
             let line = match self.buffer.line(row) {
                 Some(l) => l.to_string(),
@@ -322,6 +355,12 @@ impl Editor {
             self.highlight_index.clear_row_of_type(row, HighlightType::Bold);
             self.highlight_index.clear_row_of_type(row, HighlightType::Italic);
             self.row_style_cache.borrow_mut().invalidate_row(row);
+            if math_block.is_some() {
+                crate::core::markdown::update_display_math_block(&mut math_block, &line, |_| false);
+                self.code_block_rows.remove(&row);
+                self.highlight_index.insert(HighlightRange::new(row, 0, line.chars().count(), Style::default().fg(self.link_color).add_modifier(Modifier::ITALIC), HighlightType::Math).with_priority(2));
+                continue;
+            }
             if line.trim_start().starts_with("```") {
                 in_code_block = !in_code_block;
                 self.code_block_rows.insert(row);
@@ -333,16 +372,14 @@ impl Editor {
             if in_code_block {
                 self.code_block_rows.insert(row);
                 self.highlight_index.insert(HighlightRange::new(row, 0, line.chars().count(), Style::default().fg(self.code_color), HighlightType::CodeBlock));
-            } else if crate::core::markdown::is_display_math_delimiter(&line) {
-                in_math_block = !in_math_block;
-                self.code_block_rows.remove(&row);
-                self.highlight_index.insert(HighlightRange::new(row, 0, line.chars().count(), Style::default().fg(self.link_color).add_modifier(Modifier::ITALIC), HighlightType::Math).with_priority(2));
-            } else if in_math_block {
-                self.code_block_rows.remove(&row);
-                self.highlight_index.insert(HighlightRange::new(row, 0, line.chars().count(), Style::default().fg(self.link_color).add_modifier(Modifier::ITALIC), HighlightType::Math).with_priority(2));
             } else {
+                let is_math_delimiter = crate::core::markdown::update_display_math_block(&mut math_block, &line, |opening| self.has_matching_math_closer(row, opening));
                 self.code_block_rows.remove(&row);
-                self.highlight_line_markdown(row, &line);
+                if is_math_delimiter || math_block.is_some() {
+                    self.highlight_index.insert(HighlightRange::new(row, 0, line.chars().count(), Style::default().fg(self.link_color).add_modifier(Modifier::ITALIC), HighlightType::Math).with_priority(2));
+                } else {
+                    self.highlight_line_markdown(row, &line);
+                }
             }
         }
     }
@@ -429,6 +466,7 @@ impl Editor {
         });
     }
     pub(super) fn highlight_links(&mut self, row: usize, line: &str) {
+        let math = crate::core::markdown::inline_math(line);
         let mut cursor = 0;
         while let Some(relative_start) = line[cursor..].find('[') {
             let start = cursor + relative_start;
@@ -436,6 +474,10 @@ impl Editor {
                 cursor = start + 1;
                 continue;
             };
+            if math.iter().any(|expression| expression.range.contains(&start)) {
+                cursor = link.range.end;
+                continue;
+            }
             let start_col = line[..link.range.start].chars().count();
             let end_col = start_col + line[link.range.clone()].chars().count();
             self.highlight_index.insert(HighlightRange::new(row, start_col, end_col, Style::default().fg(self.link_color).add_modifier(Modifier::UNDERLINED), HighlightType::Link).with_priority(1));

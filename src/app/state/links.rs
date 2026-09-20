@@ -175,7 +175,7 @@ impl App {
         let mut i = 0;
         while i < target_pos && i < text.len() {
             let remaining = &text[i..];
-            if remaining.starts_with('$') {
+            if remaining.starts_with('$') || remaining.starts_with(r"\(") {
                 if let Some(math) = crate::core::markdown::inline_math_at(text, i) {
                     if math.range.end <= target_pos {
                         rendered_pos += math.source.width();

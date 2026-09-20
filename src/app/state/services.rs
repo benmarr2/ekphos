@@ -146,8 +146,8 @@ impl App {
             self.images.worker.request_local(key, path.to_path_buf());
         }
     }
-    pub fn request_math_image(&mut self, key: &str, latex: String, color: [u8; 3]) {
-        self.images.worker.request_math(key, latex, color);
+    pub fn request_math_image(&mut self, key: &str, latex: String, color: [u8; 3], style: crate::image_service::MathRenderStyle) {
+        self.images.worker.request_math(key, latex, color, style);
     }
     pub fn decoded_image(&mut self, key: &str) -> Option<Arc<DynamicImage>> {
         self.images.worker.decoded(key)

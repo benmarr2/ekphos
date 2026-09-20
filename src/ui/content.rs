@@ -79,12 +79,27 @@ mod tests {
 
     #[test]
     fn ready_inline_math_reserves_its_rendered_cell_width() {
-        let states = vec![InlineMathRenderState::Ready { image_key: "math:test".to_string(), width: 5 }];
+        let states = vec![InlineMathRenderState::Ready { image_key: "math:test".to_string(), size: Size::new(5, 2) }];
         let source = inline_math_layout_source("Energy $E = mc^2$.", &states);
         assert_eq!(source, "Energy □□□□□.");
         let spans = parse_inline_formatting_with_math::<fn(&str) -> bool>("Energy $E = mc^2$.", &Theme::default(), None, None, &states);
         let placeholder = spans.iter().find(|span| is_inline_math_placeholder(span.content.as_ref())).unwrap();
         assert_eq!(UnicodeWidthStr::width(placeholder.content.as_ref()), 5);
+        let lines = [Line::from(spans)];
+        assert_eq!(inline_math_visual_height(&lines, &states), 2);
+        assert_eq!(inline_math_source_row_for_click(&lines, &states, 0, 8), Some(0));
+        assert_eq!(inline_math_source_row_for_click(&lines, &states, 0, 0), None);
+        assert_eq!(inline_math_source_row_for_click(&lines, &states, 1, 0), Some(0));
+    }
+
+    #[test]
+    fn inline_math_state_stays_aligned_after_other_inline_syntax() {
+        let states = vec![InlineMathRenderState::Ready { image_key: "math:real".to_string(), size: Size::new(4, 1) }];
+        let text = r"[literal \(not-math\)](url) then \(real\)";
+        assert_eq!(crate::core::markdown::inline_math(text).iter().map(|expression| expression.source).collect::<Vec<_>>(), vec!["real"]);
+        let spans = parse_inline_formatting_with_math::<fn(&str) -> bool>(text, &Theme::default(), None, None, &states);
+        assert_eq!(spans.iter().filter(|span| is_inline_math_placeholder(span.content.as_ref())).count(), 1);
+        assert_eq!(spans.iter().map(|span| span.content.as_ref()).collect::<String>(), format!("literal \\(not-math\\) then {INLINE_MATH_MARKER}□□□□"));
     }
 
     #[test]
@@ -242,6 +257,10 @@ mod tests {
         let rendered = spans.iter().map(|span| span.content.as_ref()).collect::<String>();
         assert_eq!(rendered, "Euler: e^{i_1\\pi}+1=0.");
         assert_eq!(cell_visible_width("Euler: $e^{i_1\\pi}+1=0$."), UnicodeWidthStr::width(rendered.as_str()));
+
+        let parenthesized = parse_inline_formatting::<fn(&str) -> bool>(r"Half: \( \frac{1}{2} \).", &theme, None, None).iter().map(|span| span.content.as_ref()).collect::<String>();
+        assert_eq!(parenthesized, r"Half: \frac{1}{2}.");
+        assert_eq!(cell_visible_width(r"Half: \( \frac{1}{2} \)."), UnicodeWidthStr::width(parenthesized.as_str()));
     }
 
     #[test]

@@ -98,9 +98,9 @@ fn parse_document(document: &DocumentSnapshot, frontmatter: Option<&CompactFront
             line_index += 1;
             continue;
         }
-        if crate::core::markdown::is_display_math_delimiter(line) {
+        if let Some(opening_delimiter) = crate::core::markdown::display_math_opening_delimiter(line) {
             let opening_line = line_index;
-            let closing_line = ((opening_line + 1)..document.line_count()).find(|candidate| document.line(*candidate).is_some_and(crate::core::markdown::is_display_math_delimiter));
+            let closing_line = crate::core::markdown::find_display_math_closing_line(opening_delimiter, ((opening_line + 1)..document.line_count()).filter_map(|candidate| document.line(candidate).map(|line| (candidate, line))));
             if let Some(closing_line) = closing_line {
                 let start = document.line_range(opening_line + 1).map_or_else(|| document.line_range(opening_line).map_or(0, DocumentRange::end), DocumentRange::start);
                 let end = closing_line.checked_sub(1).and_then(|line| document.line_range(line)).map_or(start, DocumentRange::end);
@@ -555,7 +555,8 @@ impl App {
             let image_start = search_start + image_offset;
             let is_double_bang = image_start > 0 && text.as_bytes().get(image_start - 1) == Some(&b'!');
             let is_inline_code = is_inside_inline_code(text, image_start);
-            if is_double_bang || is_inline_code {
+            let is_inline_math = is_inside_inline_math(text, image_start);
+            if is_double_bang || is_inline_code || is_inline_math {
                 search_start = image_start + 2;
                 continue;
             }
@@ -718,7 +719,7 @@ impl App {
                             let alt_text = &from_img[3..2 + bracket_end];
                             let url = &after_bracket[..paren_end];
                             let image_end = abs_img_pos + 2 + bracket_end + 2 + paren_end + 1;
-                            if is_inside_inline_code(text, abs_img_pos) {
+                            if is_inside_inline_code(text, abs_img_pos) || is_inside_inline_math(text, abs_img_pos) {
                                 search_start = image_end;
                                 claimed.push((abs_img_pos, search_start));
                                 continue;
@@ -751,7 +752,7 @@ impl App {
                             let alt_text = &from_img[2..1 + bracket_end];
                             let url = &after_bracket[..paren_end];
                             let image_end = abs_img_pos + 1 + bracket_end + 2 + paren_end + 1;
-                            if is_inside_inline_code(text, abs_img_pos) {
+                            if is_inside_inline_code(text, abs_img_pos) || is_inside_inline_math(text, abs_img_pos) {
                                 search_start = image_end;
                                 claimed.push((abs_img_pos, search_start));
                                 continue;
@@ -784,7 +785,7 @@ impl App {
                         let link_text = &from_bracket[1..bracket_end];
                         let url = &after_bracket[..paren_end];
                         let link_end = abs_bracket_pos + bracket_end + 2 + paren_end + 1;
-                        if is_inside_inline_code(text, abs_bracket_pos) {
+                        if is_inside_inline_code(text, abs_bracket_pos) || is_inside_inline_math(text, abs_bracket_pos) {
                             search_start = link_end;
                             claimed.push((abs_bracket_pos, search_start));
                             continue;
@@ -808,7 +809,7 @@ impl App {
             if let Some(url_len) = crate::text::detect_bare_url_len(text, pos) {
                 let end = pos + url_len;
                 let overlaps = claimed.iter().any(|(s, e)| pos < *e && end > *s);
-                if !overlaps && !is_inside_inline_code(text, pos) {
+                if !overlaps && !is_inside_inline_code(text, pos) && !is_inside_inline_math(text, pos) {
                     let url = text[pos..end].to_string();
                     let rendered_start = Self::calc_rendered_pos(text, pos);
                     let rendered_end = rendered_start + url.width();
@@ -837,7 +838,7 @@ impl App {
         let mut i = 0;
         while i < target_pos && i < text.len() {
             let remaining = &text[i..];
-            if remaining.starts_with('$') {
+            if remaining.starts_with('$') || remaining.starts_with(r"\(") {
                 if let Some(math) = crate::core::markdown::inline_math_at(text, i) {
                     if math.range.end <= target_pos {
                         rendered_pos += math.source.width();
@@ -1150,7 +1151,7 @@ mod phase6_tests {
 
     #[test]
     fn display_math_blocks_keep_compact_snapshot_ranges_and_skip_code() {
-        let source = "Before\n$$\n\\int_0^1 x^2 \\, dx\n= \\frac{1}{3}\n$$\n$$e^{i\\pi}+1=0$$\n```md\n$$not math$$\n```\nAfter\n";
+        let source = "Before\n$$\n\\int_0^1 x^2 \\, dx\n= \\frac{1}{3}\n$$\n$$e^{i\\pi}+1=0$$\n\\[\n\\sum_{i=1}^n i\n\\]\n\\[x^2 + y^2 = z^2\\]\n```md\n$$not math$$\n```\nAfter\n";
         let document = DocumentSnapshot::new(Arc::from(source));
         let parsed = parse_document(&document, None, 0, true, true, &|_| false);
         let blocks: Vec<(&str, u32, u32)> = parsed
@@ -1161,7 +1162,22 @@ mod phase6_tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(blocks, [("\\int_0^1 x^2 \\, dx\n= \\frac{1}{3}", 1, 4), ("e^{i\\pi}+1=0", 5, 5)]);
+        assert_eq!(blocks, [("\\int_0^1 x^2 \\, dx\n= \\frac{1}{3}", 1, 4), ("e^{i\\pi}+1=0", 5, 5), ("\\sum_{i=1}^n i", 6, 8), ("x^2 + y^2 = z^2", 9, 9)]);
         assert!(parsed.items.iter().any(|item| matches!(item, ContentItem::CodeLine { range, .. } if document.slice(*range) == "$$not math$$")));
+    }
+
+    #[test]
+    fn inline_math_does_not_publish_inner_links_or_images() {
+        let source = r"\(\text{[hidden](hidden.test) ![hidden](hidden.png) [[Hidden]] https://hidden.test}\) [visible](visible.test) ![visible](visible.png) [[Visible]]";
+        let document = DocumentSnapshot::new(Arc::from(source));
+        let parsed = parse_document(&document, None, 0, true, true, &|target| target == "Visible");
+        assert!(parsed.links.iter().any(|link| matches!(link, LinkInfo::Markdown { url, .. } if url == "visible.test")));
+        assert!(parsed.links.iter().any(|link| matches!(link, LinkInfo::Image { path, .. } if path == "visible.png")));
+        assert!(parsed.links.iter().any(|link| matches!(link, LinkInfo::Wiki { target, .. } if target == "Visible")));
+        assert!(parsed.links.iter().all(|link| match link {
+            LinkInfo::Markdown { url, .. } => !url.contains("hidden"),
+            LinkInfo::Image { path, .. } => !path.contains("hidden"),
+            LinkInfo::Wiki { target, .. } => target != "Hidden",
+        }));
     }
 }

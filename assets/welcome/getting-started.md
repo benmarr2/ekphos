@@ -61,6 +61,16 @@ Choose an editing mode in `~/.config/ekphos/config.toml`:
 mode = "standard" # or "vim"
 ```
 
+Display equations use `latex_height`, while equations inside prose use
+`inline_latex_height`. The inline default is two terminal rows; use `1` for a
+more compact layout.
+
+```toml
+[general]
+latex_height = 8
+inline_latex_height = 2
+```
+
 Press `F6` to switch immediately and save the choice. Existing configurations without a `mode` setting continue to use Vim. Terminal emulators may handle clipboard shortcuts themselves; terminal paste and the editor context menu remain available.
 
 ## Frontmatter Templates

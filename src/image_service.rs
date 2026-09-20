@@ -21,6 +21,12 @@ const MATH_FONT_SIZE: f32 = 40.0;
 const MATH_PADDING: f32 = 4.0;
 const MATH_DEVICE_PIXEL_RATIO: f32 = 2.0;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MathRenderStyle {
+    Inline,
+    Display,
+}
+
 pub trait NetworkImageService: Send + Sync {
     fn fetch(&self, url: &str) -> Option<DynamicImage>;
 }
@@ -56,7 +62,7 @@ pub struct ImageServiceStats {
 enum ImageSource {
     Local(PathBuf),
     Remote(String),
-    Math { latex: String, color: [u8; 3] },
+    Math { latex: String, color: [u8; 3], style: MathRenderStyle },
 }
 
 struct ImageRequest {
@@ -150,8 +156,8 @@ impl ImageService {
         self.request(key, ImageSource::Remote(url.to_string()))
     }
 
-    pub fn request_math(&mut self, key: &str, latex: String, color: [u8; 3]) -> bool {
-        self.request(key, ImageSource::Math { latex, color })
+    pub fn request_math(&mut self, key: &str, latex: String, color: [u8; 3], style: MathRenderStyle) -> bool {
+        self.request(key, ImageSource::Math { latex, color, style })
     }
     fn request(&mut self, key: &str, source: ImageSource) -> bool {
         if self.decoded.contains_key(key) || self.pending.contains_key(key) || self.failures.contains_key(key) || self.pending.len() >= MAX_PENDING_IMAGE_REQUESTS {
@@ -367,7 +373,7 @@ fn load_request(request: &ImageRequest, network: &dyn NetworkImageService) -> Re
             write_cached_image(&request.cache_path, &image)?;
             (image, false)
         }
-        ImageSource::Math { latex, color } => {
+        ImageSource::Math { latex, color, style } => {
             if request.cache_path.is_file() {
                 match decode_path(&request.cache_path) {
                     Ok(image) => return Ok(image),
@@ -376,7 +382,7 @@ fn load_request(request: &ImageRequest, network: &dyn NetworkImageService) -> Re
                     }
                 }
             }
-            let image = render_math_image(latex, *color)?;
+            let image = render_math_image(latex, *color, *style)?;
             validate_image(&image)?;
             write_cached_image(&request.cache_path, &image)?;
             (image, true)
@@ -386,7 +392,7 @@ fn load_request(request: &ImageRequest, network: &dyn NetworkImageService) -> Re
     Ok(if preserve_resolution { image } else { resize_for_cache(image) })
 }
 
-fn render_math_image(latex: &str, color: [u8; 3]) -> Result<DynamicImage, String> {
+fn render_math_image(latex: &str, color: [u8; 3], style: MathRenderStyle) -> Result<DynamicImage, String> {
     let latex = latex.trim();
     if latex.is_empty() {
         return Err("empty math expression".to_string());
@@ -396,7 +402,11 @@ fn render_math_image(latex: &str, color: [u8; 3]) -> Result<DynamicImage, String
     }
     let foreground = ratex_types::Color::rgb(color[0] as f32 / 255.0, color[1] as f32 / 255.0, color[2] as f32 / 255.0);
     let ast = ratex_parser::parse(latex).map_err(|error| format!("math parse error: {error}"))?;
-    let layout_options = ratex_layout::LayoutOptions::default().with_color(foreground);
+    let math_style = match style {
+        MathRenderStyle::Inline => ratex_types::math_style::MathStyle::Text,
+        MathRenderStyle::Display => ratex_types::math_style::MathStyle::Display,
+    };
+    let layout_options = ratex_layout::LayoutOptions::default().with_style(math_style).with_color(foreground);
     let layout = ratex_layout::layout(&ast, &layout_options);
     let display_list = ratex_layout::to_display_list(&layout);
     let pixel_width = display_list.width * f64::from(MATH_FONT_SIZE * MATH_DEVICE_PIXEL_RATIO) + f64::from(2.0 * MATH_PADDING * MATH_DEVICE_PIXEL_RATIO);
@@ -531,16 +541,23 @@ mod tests {
 
     #[test]
     fn math_renderer_produces_a_transparent_high_resolution_image() {
-        let image = render_math_image(r"\frac{-b \pm \sqrt{b^2-4ac}}{2a}", [230, 230, 230]).unwrap();
+        let image = render_math_image(r"\frac{-b \pm \sqrt{b^2-4ac}}{2a}", [230, 230, 230], MathRenderStyle::Display).unwrap();
         assert!(image.width() > 100);
         assert!(image.height() > 40);
         assert_eq!(image.to_rgba8().get_pixel(0, 0).0[3], 0);
     }
 
     #[test]
+    fn inline_displaystyle_overrides_text_layout() {
+        let inline = render_math_image(r"\sum_{i=1}^n i", [230, 230, 230], MathRenderStyle::Inline).unwrap();
+        let display = render_math_image(r"\displaystyle \sum_{i=1}^n i", [230, 230, 230], MathRenderStyle::Inline).unwrap();
+        assert!(display.height() > inline.height());
+    }
+
+    #[test]
     fn math_renderer_rejects_unbounded_source_before_layout() {
         let oversized = "x".repeat(MAX_MATH_SOURCE_BYTES + 1);
-        assert!(render_math_image(&oversized, [255, 255, 255]).is_err());
+        assert!(render_math_image(&oversized, [255, 255, 255], MathRenderStyle::Display).is_err());
     }
 
     #[test]

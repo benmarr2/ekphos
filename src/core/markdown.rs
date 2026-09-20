@@ -59,9 +59,16 @@ pub fn fence_marker(line: &str) -> Option<FenceMarker> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineMath<'a> {
-    /// Byte range including the opening and closing `$` delimiters.
+    /// Byte range including the opening and closing delimiters.
     pub range: Range<usize>,
     pub source: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayMathDelimiter {
+    Dollar,
+    BracketOpen,
+    BracketClose,
 }
 
 fn byte_is_escaped(source: &str, index: usize) -> bool {
@@ -70,66 +77,137 @@ fn byte_is_escaped(source: &str, index: usize) -> bool {
 
 /// Parse an inline math expression beginning exactly at `start`.
 ///
-/// Delimiters next to whitespace are rejected, matching the behavior users
-/// expect from Markdown math extensions and avoiding most accidental dollar
-/// signs in prose. Code-span exclusion is handled by [`visit_inline_math`].
+/// Dollar delimiters next to whitespace are rejected to avoid accidental
+/// currency matches. Parenthesized delimiters accept and trim surrounding
+/// whitespace. Code-span exclusion is handled by [`visit_inline_math`].
 pub fn inline_math_at(source: &str, start: usize) -> Option<InlineMath<'_>> {
     let bytes = source.as_bytes();
-    if bytes.get(start) != Some(&b'$') || byte_is_escaped(source, start) || bytes.get(start + 1) == Some(&b'$') {
+    if bytes.get(start) == Some(&b'$') && !byte_is_escaped(source, start) && bytes.get(start + 1) != Some(&b'$') {
+        let body_start = start + 1;
+        let first = source.get(body_start..)?.chars().next()?;
+        if first.is_whitespace() || first == '$' {
+            return None;
+        }
+        let mut cursor = body_start;
+        while let Some(relative_end) = source[cursor..].find('$') {
+            let end = cursor + relative_end;
+            if byte_is_escaped(source, end) {
+                cursor = end + 1;
+                continue;
+            }
+            if bytes.get(end + 1) == Some(&b'$') {
+                cursor = end + 2;
+                continue;
+            }
+            let body = &source[body_start..end];
+            if body.contains('\n') || body.chars().next_back().is_some_and(char::is_whitespace) {
+                cursor = end + 1;
+                continue;
+            }
+            return Some(InlineMath { range: start..end + 1, source: body });
+        }
         return None;
     }
-    let body_start = start + 1;
-    let first = source.get(body_start..)?.chars().next()?;
-    if first.is_whitespace() || first == '$' {
-        return None;
-    }
-    let mut cursor = body_start;
-    while let Some(relative_end) = source[cursor..].find('$') {
-        let end = cursor + relative_end;
-        if byte_is_escaped(source, end) {
-            cursor = end + 1;
-            continue;
+
+    if source.get(start..)?.starts_with(r"\(") && !byte_is_escaped(source, start) {
+        let body_start = start + 2;
+        let mut cursor = body_start;
+        while let Some(relative_end) = source[cursor..].find(r"\)") {
+            let end = cursor + relative_end;
+            if byte_is_escaped(source, end) {
+                cursor = end + 2;
+                continue;
+            }
+            let body = source[body_start..end].trim();
+            if body.is_empty() || body.contains('\n') {
+                return None;
+            }
+            return Some(InlineMath { range: start..end + 2, source: body });
         }
-        if bytes.get(end + 1) == Some(&b'$') {
-            cursor = end + 2;
-            continue;
-        }
-        let body = &source[body_start..end];
-        if body.contains('\n') || body.chars().next_back().is_some_and(char::is_whitespace) {
-            cursor = end + 1;
-            continue;
-        }
-        return Some(InlineMath { range: start..end + 1, source: body });
     }
     None
 }
 
-/// Visit inline math on one source line, excluding inline-code spans.
+fn closing_single_marker(source: &str, start: usize, marker: u8) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut cursor = start;
+    while cursor < bytes.len() {
+        if bytes[cursor] == marker && bytes.get(cursor + 1) != Some(&marker) {
+            return Some(cursor + 1);
+        }
+        cursor += 1;
+    }
+    None
+}
+
+fn closing_double_marker(source: &str, start: usize, marker: u8) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut cursor = start;
+    while cursor + 1 < bytes.len() {
+        if bytes[cursor] == marker && bytes[cursor + 1] == marker {
+            return Some(cursor + 2);
+        }
+        cursor += 1;
+    }
+    None
+}
+
+/// Return the end of an inline construct which the content renderer consumes
+/// before looking for nested math. This keeps equation discovery aligned with
+/// the spans which are actually rendered.
+fn non_math_inline_span_end(source: &str, start: usize) -> Option<usize> {
+    let rest = source.get(start..)?;
+    if rest.starts_with('`') {
+        return Some(source[start + 1..].find('`').map_or(source.len(), |end| start + end + 2));
+    }
+    if rest.starts_with("**") {
+        return Some(closing_double_marker(source, start + 2, b'*').unwrap_or(source.len()));
+    }
+    if rest.starts_with('*') {
+        return Some(closing_single_marker(source, start + 1, b'*').unwrap_or(source.len()));
+    }
+    if rest.starts_with("__") {
+        return Some(closing_double_marker(source, start + 2, b'_').unwrap_or(source.len()));
+    }
+    if rest.starts_with('_') {
+        return Some(closing_single_marker(source, start + 1, b'_').unwrap_or(source.len()));
+    }
+    if rest.starts_with("~~") {
+        return Some(closing_double_marker(source, start + 2, b'~').unwrap_or(source.len()));
+    }
+    if rest.starts_with("!![") {
+        return markdown_link_at(source, start + 1).map(|link| link.range.end);
+    }
+    if rest.starts_with("![") {
+        return markdown_link_at(source, start).map(|link| link.range.end);
+    }
+    if rest.starts_with('[') {
+        return wiki_link_at(source, start).map(|link| link.range.end).or_else(|| markdown_link_at(source, start).map(|link| link.range.end));
+    }
+    if rest.starts_with('h') {
+        return bare_url_len(source, start).map(|len| start + len);
+    }
+    None
+}
+
+/// Visit inline math on one source line. Code, links, images, bare URLs, and
+/// emphasis take precedence when their opener occurs before a math opener;
+/// syntax contained by a math expression stays part of that expression.
 pub fn visit_inline_math<'a>(source: &'a str, mut visit: impl FnMut(InlineMath<'a>)) {
     let mut cursor = 0;
     while cursor < source.len() {
-        let remaining = &source[cursor..];
-        let next_math = remaining.find('$');
-        let next_tick = remaining.find('`');
-        if let Some(tick) = next_tick {
-            if next_math.is_none() || tick < next_math.unwrap() {
-                let opening = cursor + tick;
-                let Some(closing) = source[opening + 1..].find('`') else {
-                    break;
-                };
-                cursor = opening + 1 + closing + 1;
+        let character = source[cursor..].chars().next().expect("cursor remains on a character boundary");
+        if matches!(character, '$' | '\\') {
+            if let Some(math) = inline_math_at(source, cursor) {
+                cursor = math.range.end;
+                visit(math);
                 continue;
             }
         }
-        let Some(relative_start) = next_math else {
-            break;
-        };
-        let start = cursor + relative_start;
-        if let Some(math) = inline_math_at(source, start) {
-            cursor = math.range.end;
-            visit(math);
+        if let Some(end) = non_math_inline_span_end(source, cursor) {
+            cursor = end;
         } else {
-            cursor = start + 1;
+            cursor += character.len_utf8();
         }
     }
 }
@@ -140,16 +218,60 @@ pub fn inline_math(source: &str) -> Vec<InlineMath<'_>> {
     expressions
 }
 
-/// Return the expression from a single-line display-math block (`$$...$$`).
+/// Return the expression from a single-line display-math block (`$$...$$` or
+/// `\[...\]`).
 pub fn display_math_body(line: &str) -> Option<&str> {
     let trimmed = line.trim();
-    let body = trimmed.strip_prefix("$$")?.strip_suffix("$$")?.trim();
+    let body = if let Some(body) = trimmed.strip_prefix("$$").and_then(|body| body.strip_suffix("$$")) { body } else { trimmed.strip_prefix(r"\[")?.strip_suffix(r"\]")? }.trim();
     (!body.is_empty()).then_some(body)
+}
+
+/// Classify a standalone display-math delimiter line.
+pub fn display_math_delimiter(line: &str) -> Option<DisplayMathDelimiter> {
+    match line.trim() {
+        "$$" => Some(DisplayMathDelimiter::Dollar),
+        r"\[" => Some(DisplayMathDelimiter::BracketOpen),
+        r"\]" => Some(DisplayMathDelimiter::BracketClose),
+        _ => None,
+    }
+}
+
+pub fn display_math_delimiters_match(opening: DisplayMathDelimiter, closing: DisplayMathDelimiter) -> bool {
+    matches!((opening, closing), (DisplayMathDelimiter::Dollar, DisplayMathDelimiter::Dollar) | (DisplayMathDelimiter::BracketOpen, DisplayMathDelimiter::BracketClose))
+}
+
+pub fn display_math_opening_delimiter(line: &str) -> Option<DisplayMathDelimiter> {
+    display_math_delimiter(line).filter(|delimiter| !matches!(delimiter, DisplayMathDelimiter::BracketClose))
+}
+
+/// Find the first matching closer after an opening display-math delimiter.
+pub fn find_display_math_closing_line<'a>(opening: DisplayMathDelimiter, lines: impl IntoIterator<Item = (usize, &'a str)>) -> Option<usize> {
+    lines.into_iter().find_map(|(line, source)| display_math_delimiter(source).is_some_and(|closing| display_math_delimiters_match(opening, closing)).then_some(line))
+}
+
+/// Advance a multi-line display-math delimiter state. The boolean reports
+/// whether `line` is the matching opening or closing delimiter. A new block is
+/// opened only when `has_matching_closer` confirms that it is complete.
+pub fn update_display_math_block(state: &mut Option<DisplayMathDelimiter>, line: &str, has_matching_closer: impl FnOnce(DisplayMathDelimiter) -> bool) -> bool {
+    let Some(delimiter) = display_math_delimiter(line) else {
+        return false;
+    };
+    match *state {
+        Some(opening) if display_math_delimiters_match(opening, delimiter) => {
+            *state = None;
+            true
+        }
+        None if !matches!(delimiter, DisplayMathDelimiter::BracketClose) && has_matching_closer(delimiter) => {
+            *state = Some(delimiter);
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Recognize a standalone display-math delimiter line.
 pub fn is_display_math_delimiter(line: &str) -> bool {
-    line.trim() == "$$"
+    display_math_delimiter(line).is_some()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,39 +309,41 @@ pub fn wiki_link_at(source: &str, start: usize) -> Option<WikiLink<'_>> {
     Some(WikiLink { range: start..end, raw, target, heading, alias })
 }
 
-/// Visit valid wiki links on one source line, excluding inline-code spans.
+/// Visit valid wiki links on one source line, excluding inline-code and inline
+/// math spans.
 pub fn visit_wiki_links<'a>(source: &'a str, mut visit: impl FnMut(WikiLink<'a>)) {
     let mut cursor = 0;
     while cursor < source.len() {
-        let remaining = &source[cursor..];
-        let next_wiki = remaining.find("[[");
-        let next_tick = remaining.find('`');
-        if let Some(tick) = next_tick {
-            if next_wiki.is_none() || tick < next_wiki.unwrap() {
-                let opening = cursor + tick;
-                let Some(closing) = source[opening + 1..].find('`') else {
-                    break;
-                };
-                cursor = opening + 1 + closing + 1;
+        let character = source[cursor..].chars().next().expect("cursor remains on a character boundary");
+        if matches!(character, '$' | '\\') {
+            if let Some(math) = inline_math_at(source, cursor) {
+                cursor = math.range.end;
                 continue;
             }
         }
-        let Some(relative_start) = next_wiki else {
-            break;
-        };
-        let start = cursor + relative_start;
-        if let Some(link) = wiki_link_at(source, start) {
-            cursor = link.range.end;
-            visit(link);
-        } else if let Some(close) = source[start + 2..].find("]]") {
-            cursor = start + 2 + close + 2;
-        } else {
-            break;
+        if source[cursor..].starts_with("[[") {
+            if let Some(link) = wiki_link_at(source, cursor) {
+                cursor = link.range.end;
+                visit(link);
+            } else if let Some(close) = source[cursor + 2..].find("]]") {
+                cursor += close + 4;
+            } else {
+                break;
+            }
+            continue;
         }
+        if character == '`' {
+            let Some(closing) = source[cursor + 1..].find('`') else {
+                break;
+            };
+            cursor += closing + 2;
+            continue;
+        }
+        cursor += character.len_utf8();
     }
 }
 
-/// Find valid wiki links on one source line, excluding inline-code spans.
+/// Find valid wiki links on one source line, excluding code and math spans.
 pub fn wiki_links(source: &str) -> Vec<WikiLink<'_>> {
     let mut links = Vec::new();
     visit_wiki_links(source, |link| links.push(link));
@@ -241,9 +365,15 @@ pub fn document_wiki_links_with_tilde_fences(content: &str, skip_through_row: Op
 
 /// Visit document links without retaining an intermediate collection.
 pub fn visit_document_wiki_links_with_tilde_fences<'a>(content: &'a str, skip_through_row: Option<usize>, recognize_tilde_fences: bool, mut visit: impl FnMut(LocatedWikiLink<'a>)) {
+    let lines: Vec<&str> = content.lines().collect();
     let mut fence = None;
-    for (row, line) in content.lines().enumerate() {
+    let mut math_block = None;
+    for (row, line) in lines.iter().copied().enumerate() {
         if skip_through_row.is_some_and(|end| row <= end) {
+            continue;
+        }
+        if math_block.is_some() {
+            update_display_math_block(&mut math_block, line, |_| false);
             continue;
         }
         if let Some(marker) = fence_marker(line) {
@@ -259,6 +389,9 @@ pub fn visit_document_wiki_links_with_tilde_fences<'a>(content: &'a str, skip_th
             continue;
         }
         if fence.is_some() {
+            continue;
+        }
+        if update_display_math_block(&mut math_block, line, |opening| find_display_math_closing_line(opening, lines.iter().copied().enumerate().skip(row + 1)).is_some()) {
             continue;
         }
         visit_wiki_links(line, |link| visit(LocatedWikiLink { row, source: line, link }));
@@ -356,9 +489,8 @@ mod tests {
 
     #[test]
     fn wiki_scanner_rejects_empty_nested_and_inline_code_links() {
-        let links = wiki_links("[[]] [[[nested]]] `[[code]]` [[real]]");
-        assert_eq!(links.len(), 1);
-        assert_eq!(links[0].target, "real");
+        let links = wiki_links("[[]] [[[nested]]] `[[code]]` **[[bold]]** [[real]]");
+        assert_eq!(links.iter().map(|link| link.target).collect::<Vec<_>>(), vec!["bold", "real"]);
     }
 
     #[test]
@@ -371,19 +503,63 @@ mod tests {
 
     #[test]
     fn inline_math_respects_boundaries_escapes_and_code() {
-        let source = r"before $x_1 + \alpha$ `code $ignored$` \$cash and $y^2$ after";
+        let source = r"before $x_1 + \alpha$ and \( \frac{1}{2} \) `code $ignored$ \(ignored\)` \$cash and $y^2$ after";
         let expressions = inline_math(source);
-        assert_eq!(expressions.iter().map(|expression| expression.source).collect::<Vec<_>>(), vec![r"x_1 + \alpha", "y^2"]);
+        assert_eq!(expressions.iter().map(|expression| expression.source).collect::<Vec<_>>(), vec![r"x_1 + \alpha", r"\frac{1}{2}", "y^2"]);
         assert!(inline_math("$ spaced $").is_empty());
         assert!(inline_math("$$display$$").is_empty());
+        assert!(inline_math(r"\\(escaped\)").is_empty());
+        assert!(inline_math(r"\(\)").is_empty());
+    }
+
+    #[test]
+    fn inline_math_does_not_claim_delimiters_owned_by_other_inline_syntax() {
+        let source = r"[link \(link\)](dest) ![image \(image\)](image.png) !![preview \(preview\)](dest) https://example.test/\(url\) **\(bold\)** _\(italic\)_ ~~\(strike\)~~ [[note|\(alias\)]] then \(real\)";
+        let expressions = inline_math(source);
+        assert_eq!(expressions.iter().map(|expression| expression.source).collect::<Vec<_>>(), vec!["real"]);
+    }
+
+    #[test]
+    fn inline_math_and_wiki_links_respect_whichever_outer_syntax_opens_first() {
+        let source = r"\(\text{[[not-a-link]] and [label](url)}\) [[real|\(literal-math\)]]";
+        let expressions = inline_math(source);
+        assert_eq!(expressions.len(), 1);
+        assert_eq!(expressions[0].source, r"\text{[[not-a-link]] and [label](url)}");
+        let links = wiki_links(source);
+        assert_eq!(links.iter().map(|link| link.target).collect::<Vec<_>>(), vec!["real"]);
+    }
+
+    #[test]
+    fn document_wiki_links_skip_complete_math_blocks_but_not_unmatched_openers() {
+        let content = "$$\n[[dollar-math]]\n$$\n\\[\n[[bracket-math]]\n\\]\n\\[\n[[real]]";
+        let links = document_wiki_links_with_tilde_fences(content, None, true);
+        assert_eq!(links.iter().map(|item| item.link.target).collect::<Vec<_>>(), vec!["real"]);
+        assert_eq!(links[0].row, 7);
     }
 
     #[test]
     fn display_math_recognizes_fences_and_single_line_bodies() {
         assert!(is_display_math_delimiter("  $$  "));
+        assert!(is_display_math_delimiter(r"  \[  "));
+        assert!(is_display_math_delimiter(r"  \]  "));
         assert_eq!(display_math_body("$$ \\frac{1}{2} $$"), Some("\\frac{1}{2}"));
+        assert_eq!(display_math_body(r"\[ \sum_{i=1}^n i \]"), Some(r"\sum_{i=1}^n i"));
         assert_eq!(display_math_body("$$"), None);
+        assert_eq!(display_math_body(r"\[\]"), None);
         assert_eq!(display_math_body("price $$5"), None);
+        assert!(display_math_delimiters_match(DisplayMathDelimiter::Dollar, DisplayMathDelimiter::Dollar));
+        assert!(display_math_delimiters_match(DisplayMathDelimiter::BracketOpen, DisplayMathDelimiter::BracketClose));
+        assert!(!display_math_delimiters_match(DisplayMathDelimiter::BracketOpen, DisplayMathDelimiter::Dollar));
+
+        let mut block = None;
+        assert!(!update_display_math_block(&mut block, r"\[", |_| false));
+        assert_eq!(block, None);
+        assert!(update_display_math_block(&mut block, r"\[", |_| true));
+        assert_eq!(block, Some(DisplayMathDelimiter::BracketOpen));
+        assert!(!update_display_math_block(&mut block, "$$", |_| true));
+        assert_eq!(block, Some(DisplayMathDelimiter::BracketOpen));
+        assert!(update_display_math_block(&mut block, r"\]", |_| false));
+        assert_eq!(block, None);
     }
 
     #[test]

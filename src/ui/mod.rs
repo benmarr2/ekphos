@@ -652,7 +652,9 @@ mod tests {
         let item_area = fixture.app.state.content_item_rects.iter().find_map(|(index, rect)| (*index == item_index).then_some(*rect)).unwrap();
         let math_width = fixture.app.images.image_states.iter().find_map(|(key, state)| key.starts_with(&format!("math:inline:{item_index}:0:")).then_some(state.size.width)).unwrap();
         let link_x = item_area.x + 2 + "Before ".width() as u16 + math_width + 1;
-        let rendered_col = content_item_click_col(&fixture.app, item_index, item_area, link_x, item_area.y).unwrap();
+        assert_eq!(content_item_click_col(&fixture.app, item_index, item_area, link_x, item_area.y), None);
+        let text_row = item_area.y + item_area.height.saturating_sub(1);
+        let rendered_col = content_item_click_col(&fixture.app, item_index, item_area, link_x, text_row).unwrap();
         assert_eq!(fixture.app.find_clicked_link_at_col(item_index, rendered_col).as_deref(), Some("https://example.test"));
     }
 

@@ -226,7 +226,9 @@ pub(crate) fn content_item_click_col(app: &App, index: usize, item_area: Rect, m
                 spans.push(Span::styled(" Open ↗", Style::default()));
             }
             let math_columns = inline_math_column_adjustments(&spans, &line, &math_states);
-            let rendered_col = rendered_col_for_wrapped_click(spans, available_width, visual_row, visual_col, &app.state.theme)?;
+            let wrapped = wrap_line_for_cursor(spans.clone(), available_width, &app.state.theme);
+            let source_row = inline_math_source_row_for_click(&wrapped, &math_states, visual_row, visual_col)?;
+            let rendered_col = rendered_col_for_wrapped_click(spans, available_width, source_row, visual_col, &app.state.theme)?;
             Some(remap_inline_math_column(rendered_col, &math_columns))
         }
         ContentItem::TaskItem { text, checked, indent, .. } => {
@@ -239,7 +241,9 @@ pub(crate) fn content_item_click_col(app: &App, index: usize, item_area: Rect, m
             spans.extend([Span::styled("[", Style::default()), Span::styled(if *checked { "x" } else { " " }, Style::default()), Span::styled("]", Style::default()), Span::styled(" ", Style::default())]);
             spans.extend(parse_inline_formatting_with_math::<fn(&str) -> bool>(&expanded_text, &app.state.theme, None, None, &math_states));
             let math_columns = inline_math_column_adjustments(&spans, &expanded_text, &math_states);
-            let rendered_col = rendered_col_for_wrapped_click(spans, available_width, visual_row, visual_col, &app.state.theme)?;
+            let wrapped = wrap_line_for_cursor(spans.clone(), available_width, &app.state.theme);
+            let source_row = inline_math_source_row_for_click(&wrapped, &math_states, visual_row, visual_col)?;
+            let rendered_col = rendered_col_for_wrapped_click(spans, available_width, source_row, visual_col, &app.state.theme)?;
             Some(remap_inline_math_column(rendered_col, &math_columns))
         }
         _ => Some(visual_col),
@@ -252,7 +256,7 @@ fn inline_math_states_for_click(app: &App, item_index: usize, source: &str) -> V
         .enumerate()
         .map(|(expression_index, _)| {
             let prefix = format!("math:inline:{item_index}:{expression_index}:");
-            app.images.image_states.iter().find(|(key, _)| key.starts_with(&prefix)).map_or(InlineMathRenderState::Unsupported, |(key, state)| InlineMathRenderState::Ready { image_key: key.clone(), width: state.size.width })
+            app.images.image_states.iter().find(|(key, _)| key.starts_with(&prefix)).map_or(InlineMathRenderState::Unsupported, |(key, state)| InlineMathRenderState::Ready { image_key: key.clone(), size: state.size })
         })
         .collect()
 }

@@ -92,8 +92,8 @@ where
     } else {
         styled_line
     };
-    let mut wrapped_lines = wrap_line_for_cursor(final_line.spans, available_width, theme);
-    let placements = extract_inline_math_placements(&mut wrapped_lines, math_states, area);
+    let wrapped_lines = wrap_line_for_cursor(final_line.spans, available_width, theme);
+    let (wrapped_lines, placements) = extract_inline_math_placements(wrapped_lines, math_states, area);
     let bg_style = if is_cursor { Style::default().bg(theme.selection) } else { Style::default() };
     for (i, wrapped_line) in wrapped_lines.iter().enumerate() {
         let line_area = Rect { x: area.x, y: area.y.saturating_add(i as u16), width: area.width, height: 1 };
@@ -185,8 +185,8 @@ where
     }
     spans.extend([Span::styled("[", bracket_style), Span::styled(if checked { "x" } else { " " }, checkbox_style), Span::styled("]", bracket_style), Span::styled(" ", Style::default())]);
     spans.extend(text_spans);
-    let mut wrapped_lines = wrap_line_for_cursor(spans, available_width, theme);
-    let placements = extract_inline_math_placements(&mut wrapped_lines, math_states, area);
+    let wrapped_lines = wrap_line_for_cursor(spans, available_width, theme);
+    let (wrapped_lines, placements) = extract_inline_math_placements(wrapped_lines, math_states, area);
     let bg_style = if is_cursor { Style::default().bg(theme.selection) } else { Style::default() };
     for (i, wrapped_line) in wrapped_lines.iter().enumerate() {
         let line_area = Rect { x: area.x, y: area.y.saturating_add(i as u16), width: area.width, height: 1 };
@@ -214,26 +214,76 @@ pub(super) fn task_tree_prefix(indent: usize, has_next_sibling: bool) -> String 
     }
 }
 
-fn extract_inline_math_placements(lines: &mut [Line<'_>], states: &[InlineMathRenderState], area: Rect) -> Vec<InlineMathPlacement> {
+pub(super) fn inline_math_visual_height(lines: &[Line<'_>], states: &[InlineMathRenderState]) -> u16 {
+    let mut ready_expressions = states.iter().filter_map(|state| match state {
+        InlineMathRenderState::Ready { size, .. } => Some(*size),
+        _ => None,
+    });
+    lines.iter().map(|line| line.spans.iter().filter(|span| is_inline_math_placeholder(span.content.as_ref())).filter_map(|_| ready_expressions.next()).map(|size| size.height).max().unwrap_or(1)).fold(0u16, u16::saturating_add).max(1)
+}
+
+pub(super) fn inline_math_source_row_for_click(lines: &[Line<'_>], states: &[InlineMathRenderState], visual_row: usize, visual_col: usize) -> Option<usize> {
+    let mut ready_expressions = states.iter().filter_map(|state| match state {
+        InlineMathRenderState::Ready { size, .. } => Some(*size),
+        _ => None,
+    });
+    let mut first_visual_row = 0usize;
+    for (source_row, line) in lines.iter().enumerate() {
+        let mut x = 0usize;
+        let mut markers = Vec::new();
+        let mut line_height = 1usize;
+        for span in &line.spans {
+            let width = UnicodeWidthStr::width(span.content.as_ref());
+            if is_inline_math_placeholder(span.content.as_ref()) {
+                if let Some(size) = ready_expressions.next() {
+                    line_height = line_height.max(usize::from(size.height));
+                    markers.push((x, size));
+                }
+            }
+            x = x.saturating_add(width);
+        }
+        if visual_row < first_visual_row.saturating_add(line_height) {
+            let relative_row = visual_row.saturating_sub(first_visual_row);
+            if relative_row == line_height - 1 || markers.iter().any(|(marker_x, size)| relative_row >= line_height.saturating_sub(usize::from(size.height)) && visual_col >= *marker_x && visual_col < marker_x.saturating_add(usize::from(size.width))) {
+                return Some(source_row);
+            }
+            return None;
+        }
+        first_visual_row = first_visual_row.saturating_add(line_height);
+    }
+    None
+}
+
+fn extract_inline_math_placements<'a>(lines: Vec<Line<'a>>, states: &[InlineMathRenderState], area: Rect) -> (Vec<Line<'a>>, Vec<InlineMathPlacement>) {
     let mut ready_expressions = states.iter().enumerate().filter_map(|(index, state)| match state {
-        InlineMathRenderState::Ready { width, .. } => Some((index, *width)),
+        InlineMathRenderState::Ready { size, .. } => Some((index, *size)),
         _ => None,
     });
     let mut placements = Vec::new();
-    for (row, line) in lines.iter_mut().enumerate() {
+    let mut expanded_lines = Vec::with_capacity(usize::from(inline_math_visual_height(&lines, states)));
+    for mut line in lines {
         let mut x = 0u16;
+        let mut line_math = Vec::new();
+        let mut line_height = 1u16;
         for span in &mut line.spans {
             let span_width = u16::try_from(UnicodeWidthStr::width(span.content.as_ref())).unwrap_or(u16::MAX);
             if is_inline_math_placeholder(span.content.as_ref()) {
-                if let Some((expression_index, width)) = ready_expressions.next() {
-                    placements.push(InlineMathPlacement { expression_index, rect: Rect { x: area.x.saturating_add(x), y: area.y.saturating_add(u16::try_from(row).unwrap_or(u16::MAX)), width, height: 1 } });
-                    span.content = " ".repeat(usize::from(width)).into();
+                if let Some((expression_index, size)) = ready_expressions.next() {
+                    line_height = line_height.max(size.height);
+                    line_math.push((expression_index, x, size));
+                    span.content = " ".repeat(usize::from(size.width)).into();
                 }
             }
             x = x.saturating_add(span_width);
         }
+        let group_y = area.y.saturating_add(u16::try_from(expanded_lines.len()).unwrap_or(u16::MAX));
+        for (expression_index, x, size) in line_math {
+            placements.push(InlineMathPlacement { expression_index, rect: Rect { x: area.x.saturating_add(x), y: group_y.saturating_add(line_height.saturating_sub(size.height)), width: size.width, height: size.height } });
+        }
+        expanded_lines.extend((1..line_height).map(|_| Line::default()));
+        expanded_lines.push(line);
     }
-    placements
+    (expanded_lines, placements)
 }
 
 pub(super) fn render_table_row(f: &mut Frame, document: &DocumentSnapshot, cells: &[DocumentRange], row_flags: (bool, bool), natural_widths: &[u16], alignments: &[crate::app::Alignment], context: RenderContext<'_>) {

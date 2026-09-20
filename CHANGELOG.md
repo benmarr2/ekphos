@@ -9,6 +9,7 @@ Notable Ekphos changes are summarized here. The in-app “What’s new” dialog
 - Added in-app creation for Markdown notes, JSON Canvas files, and Obsidian Bases through the New Document dialog.
 - Made Canvas visually authorable with pointer and keyboard context menus, text/file/link/group creation, vault file search, duplication, card deletion, and empty-space double-click creation.
 - Added a collapsible Canvas shortcut legend and dedicated, remappable Canvas navigation, zoom, and history keys so global panel focus, history, zen mode, and task view keep their original behavior.
+- Expanded LaTeX rendering with `\(...\)` and `\[...\]` delimiters, working `\displaystyle` overrides, and configurable inline equation height.
 
 ## [0.50.10] - 2026-09-14
 

@@ -34,11 +34,19 @@ Wikilinks let you connect your notes together, creating a personal knowledge bas
 
 ### Math
 
-Inline expressions such as $E = mc^2$ render directly inside prose. Put a formula between `$$` delimiters to render it as a display equation:
+Inline expressions such as $E = mc^2$ and \(\displaystyle \sum_{i=1}^n i\) render directly inside prose. Use `$$` or `\[` and `\]` delimiters for a display equation:
 
 $$
 \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
 $$
+
+Set equation heights in the `[general]` section of `~/.config/ekphos/config.toml`:
+
+```toml
+[general]
+latex_height = 8
+inline_latex_height = 2
+```
 
 ### Tasks with Links
 

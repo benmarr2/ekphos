@@ -37,7 +37,7 @@ pub fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
     let standalone_image_height = app.state.config.effective_image_height();
     let inline_image_height = app.state.config.effective_inline_image_height();
     let math_blocks = prepare_math_blocks(app, Size::new(inner_area.width, inner_area.height), !skip_images);
-    let inline_math = prepare_inline_math(app, inner_area.width, !skip_images);
+    let inline_math = prepare_inline_math(app, Size::new(inner_area.width, inner_area.height), !skip_images);
     let document = app.document.active_document.as_ref().expect("normal-mode content requires a document snapshot");
     let document_tables = &app.document.document_tables;
     let document_link_ranges = &app.document.document_link_ranges;
@@ -71,12 +71,32 @@ pub fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
         }
         lines.min(max_item_height)
     };
+    let calc_inline_math_height = |spans: Vec<Span<'_>>, states: &[InlineMathRenderState]| -> u16 {
+        let wrapped = wrap_line_for_cursor(spans, (inner_area.width as usize).saturating_sub(1), theme);
+        inline_math_visual_height(&wrapped, states).min(max_item_height)
+    };
     if scratch.height_generation != app.document.document_generation || scratch.height_width != available_width || scratch.item_text_heights.len() != app.document.content_items.len() {
         scratch.item_text_heights.clear();
         scratch.item_text_heights.extend(app.document.content_items.iter().enumerate().map(|(idx, item)| match item {
             ContentItem::TextLine { range, .. } => {
                 let line = normalize_whitespace(document.slice(*range));
                 let (prose_source, prefix_len) = unordered_list_parts(&line).map_or((line.as_str(), 4), |(indent, body)| (body, 4 + indent.len()));
+                if !inline_math[idx].is_empty() {
+                    let mut spans = vec![Span::raw("  ")];
+                    if let Some((indent, body)) = unordered_list_parts(&line) {
+                        if !indent.is_empty() {
+                            spans.push(Span::raw(indent.to_string()));
+                        }
+                        spans.push(Span::raw("• "));
+                        spans.extend(parse_inline_formatting_with_math::<fn(&str) -> bool>(body, theme, None, None, &inline_math[idx]));
+                    } else if let Some(body) = line.strip_prefix("> ") {
+                        spans.push(Span::raw("┃ "));
+                        spans.extend(parse_inline_formatting_with_math::<fn(&str) -> bool>(body, theme, None, None, &inline_math[idx]));
+                    } else {
+                        spans.extend(parse_inline_formatting_with_math::<fn(&str) -> bool>(&line, theme, None, None, &inline_math[idx]));
+                    }
+                    return calc_inline_math_height(spans, &inline_math[idx]);
+                }
                 if app.inline_image_count_at(idx) == 0 {
                     calc_wrapped_height(&inline_math_layout_source(prose_source, &inline_math[idx]), prefix_len)
                 } else {
@@ -91,6 +111,16 @@ pub fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
             }
             ContentItem::TaskItem { text, indent, .. } => {
                 let text = document.slice(*text);
+                if !inline_math[idx].is_empty() {
+                    let expanded = expand_tabs(text);
+                    let mut spans = vec![Span::raw("  ")];
+                    if *indent > 0 {
+                        spans.push(Span::raw(task_tree_prefix(*indent as usize, false)));
+                    }
+                    spans.extend([Span::raw("["), Span::raw(" "), Span::raw("]"), Span::raw(" ")]);
+                    spans.extend(parse_inline_formatting_with_math::<fn(&str) -> bool>(&expanded, theme, None, None, &inline_math[idx]));
+                    return calc_inline_math_height(spans, &inline_math[idx]);
+                }
                 if app.inline_image_count_at(idx) == 0 {
                     calc_wrapped_height(&inline_math_layout_source(text, &inline_math[idx]), 6 + *indent as usize)
                 } else {

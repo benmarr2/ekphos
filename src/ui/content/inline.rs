@@ -40,13 +40,13 @@ where
                 continue;
             }
         }
-        if c == '$' {
+        if c == '$' || c == '\\' {
             if let Some(math) = crate::core::markdown::inline_math_at(text, i) {
                 if i > current_start {
                     spans.push(Span::styled(&text[current_start..i], Style::default().fg(content_theme.text)));
                 }
-                if let Some(InlineMathRenderState::Ready { width, .. }) = math_states.get(math_index) {
-                    spans.push(Span::styled(inline_math_placeholder(*width), Style::default().fg(content_theme.text)));
+                if let Some(InlineMathRenderState::Ready { size, .. }) = math_states.get(math_index) {
+                    spans.push(Span::styled(inline_math_placeholder(size.width), Style::default().fg(content_theme.text)));
                 } else {
                     spans.push(Span::styled(math.source, Style::default().fg(theme.secondary).add_modifier(Modifier::ITALIC)));
                 }
@@ -322,8 +322,8 @@ pub(super) fn inline_math_layout_source(text: &str, states: &[InlineMathRenderSt
     let mut previous_end = 0;
     for (index, expression) in crate::core::markdown::inline_math(text).into_iter().enumerate() {
         result.push_str(&text[previous_end..expression.range.start]);
-        if let Some(InlineMathRenderState::Ready { width, .. }) = states.get(index) {
-            result.push_str(&"□".repeat(usize::from((*width).max(1))));
+        if let Some(InlineMathRenderState::Ready { size, .. }) = states.get(index) {
+            result.push_str(&"□".repeat(usize::from(size.width.max(1))));
         } else {
             result.push_str(expression.source);
         }

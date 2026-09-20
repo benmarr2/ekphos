@@ -141,6 +141,10 @@ fn is_inside_inline_code(text: &str, position: usize) -> bool {
     text[..position].chars().filter(|&ch| ch == '`').count() % 2 == 1
 }
 
+fn is_inside_inline_math(text: &str, position: usize) -> bool {
+    crate::core::markdown::inline_math(text).into_iter().any(|expression| expression.range.contains(&position))
+}
+
 mod interaction_types;
 pub use interaction_types::*;
 

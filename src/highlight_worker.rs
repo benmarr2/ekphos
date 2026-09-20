@@ -220,7 +220,7 @@ fn compute_snapshot_highlights(snapshot: &EditorSnapshot, colors: &HighlightColo
     let mut highlights = Vec::with_capacity(row_end.saturating_sub(rows.start).saturating_mul(2));
     let frontmatter_end = crate::core::markdown::frontmatter_end_in_lines(snapshot.iter_lines());
     let mut in_code_block = false;
-    let mut in_math_block = false;
+    let mut math_block = None;
     for (row, line) in snapshot.iter_lines().take(row_end).enumerate() {
         if is_cancelled() {
             return None;
@@ -233,6 +233,13 @@ fn compute_snapshot_highlights(snapshot: &EditorSnapshot, colors: &HighlightColo
                 }
                 continue;
             }
+        }
+        if math_block.is_some() {
+            crate::core::markdown::update_display_math_block(&mut math_block, line, |_| false);
+            if rows.contains(&row) {
+                highlights.push(HighlightRange::new(row, 0, bytecount_chars(line), Style::default().fg(colors.link_color).add_modifier(Modifier::ITALIC), HighlightType::Math).with_priority(2));
+            }
+            continue;
         }
         let trimmed = line.trim_start();
         if trimmed.len() >= 3 && trimmed.as_bytes()[0] == b'`' && trimmed.starts_with("```") {
@@ -250,14 +257,7 @@ fn compute_snapshot_highlights(snapshot: &EditorSnapshot, colors: &HighlightColo
             }
             continue;
         }
-        if crate::core::markdown::is_display_math_delimiter(line) {
-            in_math_block = !in_math_block;
-            if rows.contains(&row) {
-                highlights.push(HighlightRange::new(row, 0, bytecount_chars(line), Style::default().fg(colors.link_color).add_modifier(Modifier::ITALIC), HighlightType::Math).with_priority(2));
-            }
-            continue;
-        }
-        if in_math_block {
+        if crate::core::markdown::update_display_math_block(&mut math_block, line, |opening| crate::core::markdown::find_display_math_closing_line(opening, snapshot.iter_lines().enumerate().skip(row + 1)).is_some()) {
             if rows.contains(&row) {
                 highlights.push(HighlightRange::new(row, 0, bytecount_chars(line), Style::default().fg(colors.link_color).add_modifier(Modifier::ITALIC), HighlightType::Math).with_priority(2));
             }
@@ -417,6 +417,7 @@ fn highlight_math_fast(row: usize, line: &str, colors: &HighlightColors, highlig
 #[inline]
 fn highlight_links_fast(row: usize, line: &str, colors: &HighlightColors, highlights: &mut Vec<HighlightRange>) {
     let check_from = highlights.len();
+    let math = crate::core::markdown::inline_math(line);
     let mut cursor = 0;
     while let Some(relative_start) = line[cursor..].find('[') {
         let start = cursor + relative_start;
@@ -424,6 +425,10 @@ fn highlight_links_fast(row: usize, line: &str, colors: &HighlightColors, highli
             cursor = start + 1;
             continue;
         };
+        if math.iter().any(|expression| expression.range.contains(&start)) {
+            cursor = link.range.end;
+            continue;
+        }
         let columns = link.range.start..link.range.end;
         let start_col = line[..columns.start].chars().count();
         let end_col = start_col + line[columns.clone()].chars().count();
@@ -498,11 +503,16 @@ fn highlight_italic_fast(row: usize, line: &str, colors: &HighlightColors, highl
 fn compute_snapshot_wiki_links(snapshot: &EditorSnapshot, frontmatter_end: Option<usize>, rows: std::ops::Range<usize>, mut is_cancelled: impl FnMut() -> bool) -> Option<Vec<WikiLinkRange>> {
     let mut links = Vec::new();
     let mut in_code_block = false;
+    let mut math_block = None;
     for (row, line) in snapshot.iter_lines().take(rows.end).enumerate() {
         if is_cancelled() {
             return None;
         }
         if frontmatter_end.is_some_and(|end| row <= end) {
+            continue;
+        }
+        if math_block.is_some() {
+            crate::core::markdown::update_display_math_block(&mut math_block, line, |_| false);
             continue;
         }
         match crate::core::markdown::fence_marker(line) {
@@ -513,6 +523,9 @@ fn compute_snapshot_wiki_links(snapshot: &EditorSnapshot, frontmatter_end: Optio
             Some(crate::core::markdown::FenceMarker::Tilde) => {}
             None if in_code_block => continue,
             None => {}
+        }
+        if crate::core::markdown::update_display_math_block(&mut math_block, line, |opening| crate::core::markdown::find_display_math_closing_line(opening, snapshot.iter_lines().enumerate().skip(row + 1)).is_some()) {
+            continue;
         }
         if rows.contains(&row) {
             crate::core::markdown::visit_wiki_links(line, |link| {
@@ -749,12 +762,44 @@ mod tests {
     #[test]
     fn math_highlighting_covers_inline_and_display_source_but_not_code() {
         let colors = HighlightColors::default();
-        let content = "Inline $x_1 + \\alpha$\n$$\n\\frac{1}{2}\n$$\n```md\n$not_math$\n```";
+        let content = "Inline $x_1 + \\alpha$ and \\(y^2\\)\n\\[\n\\frac{1}{2}\n\\]\n```md\n$not_math$\n```";
         let (highlights, _) = compute_all_highlights(content, &colors);
-        assert!(highlights.iter().any(|highlight| highlight.row == 0 && highlight.highlight_type == HighlightType::Math));
+        assert_eq!(highlights.iter().filter(|highlight| highlight.row == 0 && highlight.highlight_type == HighlightType::Math).count(), 2);
         assert!(highlights.iter().any(|highlight| highlight.row == 2 && highlight.highlight_type == HighlightType::Math));
         assert!(highlights.iter().filter(|highlight| highlight.row == 5).all(|highlight| highlight.highlight_type == HighlightType::CodeBlock));
         assert!(highlights.iter().all(|highlight| !(highlight.row == 0 && highlight.highlight_type == HighlightType::Italic)));
+    }
+
+    #[test]
+    fn math_highlighting_respects_inline_syntax_precedence() {
+        let colors = HighlightColors::default();
+        let content = r"[literal \(not-math\)](url) \(real\) \(\text{[not-a-link](url)}\)";
+        let (highlights, _) = compute_all_highlights(content, &colors);
+        assert_eq!(highlights.iter().filter(|highlight| highlight.highlight_type == HighlightType::Math).count(), 2);
+        assert_eq!(highlights.iter().filter(|highlight| highlight.highlight_type == HighlightType::Link).count(), 1);
+    }
+
+    #[test]
+    fn unmatched_display_openers_do_not_capture_following_markdown() {
+        let colors = HighlightColors::default();
+        let content = "\\[\n# Heading\n$$\n**bold**";
+        let (highlights, _) = compute_all_highlights(content, &colors);
+        assert!(highlights.iter().all(|highlight| highlight.highlight_type != HighlightType::Math));
+        assert!(highlights.iter().any(|highlight| highlight.row == 1 && highlight.highlight_type == HighlightType::Header));
+        assert!(highlights.iter().any(|highlight| highlight.row == 3 && highlight.highlight_type == HighlightType::Bold));
+    }
+
+    #[test]
+    fn complete_display_math_owns_inner_fences_and_wiki_links() {
+        let colors = HighlightColors::default();
+        let content = "\\[\n```\n[[not-a-link]]\n```\n\\]\n# After";
+        let (highlights, _) = compute_all_highlights(content, &colors);
+        for row in 0..=4 {
+            assert!(highlights.iter().any(|highlight| highlight.row == row && highlight.highlight_type == HighlightType::Math));
+            assert!(highlights.iter().all(|highlight| !(highlight.row == row && highlight.highlight_type == HighlightType::CodeBlock)));
+        }
+        assert!(highlights.iter().any(|highlight| highlight.row == 5 && highlight.highlight_type == HighlightType::Header));
+        assert!(compute_all_wiki_links(content, None).is_empty());
     }
 
     #[test]
