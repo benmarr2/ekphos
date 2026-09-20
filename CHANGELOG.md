@@ -4,6 +4,8 @@ Notable Ekphos changes are summarized here. The in-app “What’s new” dialog
 
 ## [Unreleased]
 
+## [0.50.20] - 2026-09-20
+
 ### Summary
 
 - Added in-app creation for Markdown notes, JSON Canvas files, and Obsidian Bases through the New Document dialog.
@@ -44,7 +46,8 @@ Ekphos is now part of nostacks, a software lab founded by Ekphos’s creator. Ek
 
 - Improved terminal compatibility and packaging across supported platforms.
 
-[Unreleased]: https://github.com/nostacks/ekphos/compare/v0.50.10...HEAD
+[Unreleased]: https://github.com/nostacks/ekphos/compare/v0.50.20...HEAD
+[0.50.20]: https://github.com/nostacks/ekphos/releases/tag/v0.50.20
 [0.50.10]: https://github.com/nostacks/ekphos/releases/tag/v0.50.10
 [0.25.10]: https://github.com/nostacks/ekphos/releases/tag/v0.25.10
 [0.25.0]: https://github.com/nostacks/ekphos/releases/tag/v0.25.0
