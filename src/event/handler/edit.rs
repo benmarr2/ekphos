@@ -75,7 +75,7 @@ pub(super) fn handle_edit_mode(app: &mut App, key: crossterm::event::KeyEvent) {
 fn handle_editor_command(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
     let accepts_line_commands = app.state.config.editor.mode == EditingMode::Standard || matches!(app.editor.vim.mode.input_mode(), VimInputMode::Normal | VimInputMode::Insert | VimInputMode::Replace);
     let cursor_row = app.editor.cursor().0;
-    let can_toggle_fold = accepts_line_commands && app.editor.foldable_heading_level(cursor_row).is_some();
+    let can_toggle_fold = accepts_line_commands && !app.editor.has_selection() && app.editor.foldable_heading_level(cursor_row).is_some();
     let resolution = app.state.keymap.resolve_editor(key, |command| match command {
         AppCommand::InsertTask => accepts_line_commands,
         AppCommand::ToggleEditorFold => can_toggle_fold,

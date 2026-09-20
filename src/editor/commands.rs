@@ -1,6 +1,92 @@
 use super::*;
 
 impl Editor {
+    /// Indent every line touched by the current character selection. The
+    /// selection remains active so repeated Tab presses keep shifting the same
+    /// block, and the whole change is recorded as one undo step.
+    pub fn indent_selected_lines(&mut self) -> bool {
+        let Some((start, end)) = self.selection_range() else {
+            return false;
+        };
+        if start == end {
+            return false;
+        }
+
+        let cursor_before = self.cursor.pos();
+        let anchor_before = if cursor_before == start { end } else { start };
+        let end_row = if end.col == 0 && end.row > start.row { end.row - 1 } else { end.row };
+        let mut operations = Vec::with_capacity(end_row - start.row + 1);
+
+        for row in start.row..=end_row {
+            self.buffer.insert_char(row, 0, '\t');
+            self.wrap_cache.invalidate_line(row);
+            self.update_row_highlights(row);
+            operations.push(EditOperation::Insert { pos: Position::new(row, 0), text: "\t".to_string() });
+        }
+
+        self.reconcile_fold_anchors();
+        let shift = |position: Position| {
+            if (start.row..=end_row).contains(&position.row) {
+                Position::new(position.row, position.col + 1)
+            } else {
+                position
+            }
+        };
+        let cursor_after = shift(cursor_before);
+        let anchor_after = shift(anchor_before);
+        self.history.record_group(operations, cursor_before, cursor_after);
+        self.cursor.restore_selection(anchor_after, cursor_after);
+        self.ensure_cursor_visible();
+        true
+    }
+
+    /// Outdent every line touched by the current character selection by one
+    /// configured indentation level, preserving the selection and undoing the
+    /// block as a single edit.
+    pub fn outdent_selected_lines(&mut self) -> bool {
+        let Some((start, end)) = self.selection_range() else {
+            return false;
+        };
+        if start == end {
+            return false;
+        }
+
+        let cursor_before = self.cursor.pos();
+        let anchor_before = if cursor_before == start { end } else { start };
+        let end_row = if end.col == 0 && end.row > start.row { end.row - 1 } else { end.row };
+        let mut removed_by_row = vec![0; end_row - start.row + 1];
+        let mut operations = Vec::with_capacity(removed_by_row.len());
+
+        for row in start.row..=end_row {
+            let Some(line) = self.buffer.line(row) else {
+                continue;
+            };
+            let remove_len = if line.starts_with('\t') { 1 } else { line.chars().take(self.tab_width as usize).take_while(|character| *character == ' ').count() };
+            if remove_len == 0 {
+                continue;
+            }
+            let deleted_text = self.buffer.delete_range(row, 0, remove_len);
+            removed_by_row[row - start.row] = remove_len;
+            self.wrap_cache.invalidate_line(row);
+            self.update_row_highlights(row);
+            operations.push(EditOperation::Delete { start: Position::new(row, 0), end: Position::new(row, remove_len), deleted_text });
+        }
+
+        if !operations.is_empty() {
+            self.reconcile_fold_anchors();
+        }
+        let shift = |position: Position| {
+            let removed = position.row.checked_sub(start.row).and_then(|index| removed_by_row.get(index)).copied().unwrap_or(0);
+            Position::new(position.row, position.col.saturating_sub(removed))
+        };
+        let cursor_after = shift(cursor_before);
+        let anchor_after = shift(anchor_before);
+        self.history.record_group(operations, cursor_before, cursor_after);
+        self.cursor.restore_selection(anchor_after, cursor_after);
+        self.ensure_cursor_visible();
+        true
+    }
+
     /// Indent the current Markdown list item as a whole, keeping the marker and
     /// body together. Returns `false` when the current line is not a list item.
     pub fn indent_current_list_item(&mut self) -> bool {

@@ -47,12 +47,17 @@ pub(super) fn handle_standard_mode(app: &mut App, key: crossterm::event::KeyEven
             app.editor.delete_selection();
             app.update_editor_highlights();
         }
+        KeyCode::Tab if key.modifiers.is_empty() && app.editor.indent_selected_lines() => {}
         KeyCode::Tab if key.modifiers.is_empty() && app.editor.indent_current_list_item() => {}
         KeyCode::BackTab if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) => {
-            app.editor.outdent_current_list_item();
+            if !app.editor.outdent_selected_lines() {
+                app.editor.outdent_current_list_item();
+            }
         }
         KeyCode::Tab if key.modifiers == KeyModifiers::SHIFT => {
-            app.editor.outdent_current_list_item();
+            if !app.editor.outdent_selected_lines() {
+                app.editor.outdent_current_list_item();
+            }
         }
         KeyCode::Char(_) if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) => {}
         KeyCode::Backspace | KeyCode::Delete if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) => {}
@@ -268,6 +273,42 @@ mod tests {
         fixture.app.editor.set_cursor(3, 6);
         handle_edit_mode(&mut fixture.app, key(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(fixture.app.editor.line(3), Some("\t- [ ] task"));
+    }
+
+    #[test]
+    fn tab_and_shift_tab_indent_selected_lines_without_replacing_text() {
+        let mut fixture = StandardApp::new();
+        fixture.app.editor.select_all();
+        fixture.app.editor.insert_str("one\ntwo\nthree");
+        fixture.app.editor.set_cursor(0, 0);
+        fixture.app.editor.start_selection();
+        fixture.app.editor.set_cursor(2, 0);
+
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(fixture.app.editor.text(), "\tone\n\ttwo\nthree");
+        assert_eq!(fixture.app.editor.selection_range(), Some((Position::new(0, 1), Position::new(2, 0))));
+
+        handle_edit_mode(&mut fixture.app, key(KeyCode::BackTab, KeyModifiers::SHIFT));
+        assert_eq!(fixture.app.editor.text(), "one\ntwo\nthree");
+        assert_eq!(fixture.app.editor.selection_range(), Some((Position::new(0, 0), Position::new(2, 0))));
+
+        assert!(fixture.app.editor.undo());
+        assert_eq!(fixture.app.editor.text(), "\tone\n\ttwo\nthree");
+        assert!(fixture.app.editor.undo());
+        assert_eq!(fixture.app.editor.text(), "one\ntwo\nthree");
+    }
+
+    #[test]
+    fn tab_indents_the_line_containing_a_partial_selection() {
+        let mut fixture = StandardApp::new();
+        fixture.app.editor.set_cursor(0, 1);
+        fixture.app.editor.start_selection();
+        fixture.app.editor.set_cursor(0, 4);
+
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Tab, KeyModifiers::NONE));
+
+        assert_eq!(fixture.app.editor.text(), "\thello world");
+        assert_eq!(fixture.app.editor.selected_text().as_deref(), Some("ell"));
     }
 
     #[test]

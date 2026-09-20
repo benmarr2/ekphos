@@ -114,6 +114,11 @@ impl Cursor {
     pub fn selection_range(&self) -> Option<(Position, Position)> {
         self.selection.range(self.position)
     }
+
+    pub(super) fn restore_selection(&mut self, anchor: Position, position: Position) {
+        self.selection.start(anchor);
+        self.move_to(position.row, position.col);
+    }
 }
 
 pub fn is_word_char(c: char) -> bool {
