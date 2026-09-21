@@ -70,8 +70,6 @@ cd ekphos
 
 Read the [Ekphos documentation](https://ekphos.nostacks.xyz/docs).
 
-[![Packaging status](https://repology.org/badge/vertical-allrepos/ekphos.svg)](https://repology.org/project/ekphos/versions)
-
 ## License
 
 MIT
