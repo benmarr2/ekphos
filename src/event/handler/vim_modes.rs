@@ -26,6 +26,18 @@ pub(super) fn handle_vim_insert_mode(app: &mut App, key: crossterm::event::KeyEv
             app.editor.vim.mode = VimMode::Normal;
             app.start_buffer_search();
         }
+        KeyCode::Tab if key.modifiers.is_empty() && app.editor.indent_selected_lines() => {}
+        KeyCode::Tab if key.modifiers.is_empty() && app.editor.indent_current_list_item() => {}
+        KeyCode::BackTab if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) => {
+            if !app.editor.outdent_selected_lines() {
+                app.editor.outdent_current_list_item();
+            }
+        }
+        KeyCode::Tab if key.modifiers == KeyModifiers::SHIFT => {
+            if !app.editor.outdent_selected_lines() {
+                app.editor.outdent_current_list_item();
+            }
+        }
         _ => handle_editor_text_input(app, key),
     }
 }

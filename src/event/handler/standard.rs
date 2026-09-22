@@ -276,6 +276,34 @@ mod tests {
     }
 
     #[test]
+    fn vim_insert_tab_and_shift_tab_move_entire_list_items() {
+        let mut fixture = StandardApp::new();
+        fixture.app.editor.select_all();
+        fixture.app.editor.insert_str("- first\n- second\n1. ordered\n- [ ] task\nplain");
+        fixture.app.state.config.editor.mode = EditingMode::Vim;
+        fixture.app.editor.vim.mode = VimMode::Insert;
+
+        for (row, original, outdent_key, modifiers) in [(1, "- second", KeyCode::BackTab, KeyModifiers::NONE), (2, "1. ordered", KeyCode::Tab, KeyModifiers::SHIFT), (3, "- [ ] task", KeyCode::BackTab, KeyModifiers::SHIFT)] {
+            let col = original.chars().count();
+            fixture.app.editor.set_cursor(row, col);
+            handle_edit_mode(&mut fixture.app, key(KeyCode::Tab, KeyModifiers::NONE));
+            assert_eq!(fixture.app.editor.line(row), Some(format!("\t{original}").as_str()));
+            assert_eq!(fixture.app.editor.cursor(), (row, col + 1));
+
+            handle_edit_mode(&mut fixture.app, key(outdent_key, modifiers));
+            assert_eq!(fixture.app.editor.line(row), Some(original));
+            assert_eq!(fixture.app.editor.cursor(), (row, col));
+        }
+
+        assert_eq!(fixture.app.editor.line(0), Some("- first"));
+
+        fixture.app.editor.set_cursor(4, 2);
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(fixture.app.editor.line(4), Some("pl\tain"));
+        assert_eq!(fixture.app.editor.vim.mode, VimMode::Insert);
+    }
+
+    #[test]
     fn tab_and_shift_tab_indent_selected_lines_without_replacing_text() {
         let mut fixture = StandardApp::new();
         fixture.app.editor.select_all();
