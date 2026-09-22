@@ -152,8 +152,8 @@ impl App {
     pub fn decoded_image(&mut self, key: &str) -> Option<Arc<DynamicImage>> {
         self.images.worker.decoded(key)
     }
-    pub fn image_dimensions(&self, key: &str) -> Option<(u32, u32)> {
-        self.images.worker.dimensions(key)
+    pub fn math_metrics(&self, key: &str) -> Option<crate::image_service::MathMetrics> {
+        self.images.worker.math_metrics(key)
     }
     pub fn reload_image(&mut self, key: &str) {
         self.images.worker.reload(key);

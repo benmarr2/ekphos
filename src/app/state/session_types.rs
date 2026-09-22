@@ -275,7 +275,7 @@ impl Alignment {
 #[derive(Debug, Clone)]
 pub enum ContentItem {
     TextLine { range: DocumentRange, source_line: u32, heading_level: u8 },
-    MathBlock { range: DocumentRange, source_line: u32, end_line: u32 },
+    MathBlock { range: DocumentRange, source_line: u32, end_line: u32, marker: DocumentRange, indent: u16 },
     Image { path: DocumentRange, source_line: u32 },
     CodeLine { range: DocumentRange, source_line: u32 },
     CodeFence { language: DocumentRange, source_line: u32 },

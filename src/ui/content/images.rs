@@ -1,8 +1,22 @@
 use super::*;
+use crate::image_service::{MathMetrics, MathRenderStyle, MATH_PADDING_EMS};
+
+const INLINE_MATH_REFERENCE_EMS: f32 = 1.25;
+const DISPLAY_MATH_REFERENCE_EMS: f32 = 2.5;
+const MATH_CELL_TOLERANCE: f32 = 0.15;
+const MATH_INK_OVERSHOOT_EMS: f32 = 0.03;
+const TEXT_BASELINE_IN_ROW: f32 = 0.78;
+const MATH_BASELINE_SLACK: f32 = 0.1;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct MathRaster {
+    pub(super) pixel_height: u32,
+    pub(super) offset_y: i32,
+}
 
 #[derive(Clone)]
 pub(super) enum MathBlockRenderState {
-    Ready { image_key: String, size: Size },
+    Ready { image_key: String, size: Size, raster: MathRaster },
     Pending { height: u16 },
     Failed { height: u16 },
     Unsupported { height: u16 },
@@ -10,7 +24,7 @@ pub(super) enum MathBlockRenderState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum InlineMathRenderState {
-    Ready { image_key: String, size: Size },
+    Ready { image_key: String, size: Size, text_row: u16, raster: MathRaster },
     Pending,
     Failed,
     Unsupported,
@@ -72,10 +86,10 @@ fn terminal_color_rgb(color: ratatui::style::Color, fallback: ratatui::style::Co
     }
 }
 
-fn math_image_key(latex: &str, color: [u8; 3], style: crate::image_service::MathRenderStyle) -> String {
+fn math_image_key(latex: &str, color: [u8; 3], style: MathRenderStyle) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "ratex-0.1.14-v2".hash(&mut hasher);
+    "ratex-0.1.14-v3".hash(&mut hasher);
     latex.hash(&mut hasher);
     color.hash(&mut hasher);
     style.hash(&mut hasher);
@@ -86,119 +100,197 @@ fn display_math_state_key(item_index: usize, image_key: &str) -> String {
     format!("math:block:{item_index}:{image_key}")
 }
 
-fn inline_math_state_key(item_index: usize, expression_index: usize, image_key: &str) -> String {
-    format!("math:inline:{item_index}:{expression_index}:{image_key}")
+fn inline_math_state_prefix(item_index: usize, expression_index: usize) -> String {
+    format!("math:inline:{item_index}:{expression_index}:")
 }
 
-fn natural_math_size((width, height): (u32, u32), font_size: ratatui_image::FontSize) -> Size {
-    let cells = |pixels: u32, cell: u16| u16::try_from(pixels.div_ceil(u32::from(cell.max(1)))).unwrap_or(u16::MAX);
-    Size::new(cells(width, font_size.width), cells(height, font_size.height))
+fn inline_math_state_key(item_index: usize, expression_index: usize, text_row: u16, image_key: &str) -> String {
+    format!("{}{text_row}:{image_key}", inline_math_state_prefix(item_index, expression_index))
 }
 
-pub(super) fn fit_math_size(natural: Size, available: Size, preferred_height: u16) -> Size {
-    let max_width = available.width.max(1);
-    let max_height = available.height.max(1);
-    let width_scale = max_width as f32 / natural.width.max(1) as f32;
-    let height_scale = preferred_height.min(max_height).max(1) as f32 / natural.height.max(1) as f32;
-    let scale = width_scale.min(height_scale);
-    Size::new(((natural.width.max(1) as f32 * scale).round() as u16).clamp(1, max_width), ((natural.height.max(1) as f32 * scale).round() as u16).clamp(1, max_height))
+pub(super) fn cached_inline_math_state(app: &App, item_index: usize, expression_index: usize) -> InlineMathRenderState {
+    let prefix = inline_math_state_prefix(item_index, expression_index);
+    app.images
+        .image_states
+        .iter()
+        .find_map(|(key, state)| {
+            let (text_row, image_key) = key.strip_prefix(&prefix)?.split_once(':')?;
+            Some(InlineMathRenderState::Ready { image_key: image_key.to_string(), size: state.size, text_row: text_row.parse().ok()?, raster: MathRaster::default() })
+        })
+        .unwrap_or(InlineMathRenderState::Unsupported)
 }
 
-pub(super) fn prepare_math_blocks(app: &mut App, viewport: Size, render_images: bool) -> Vec<Option<MathBlockRenderState>> {
-    let expressions: Vec<(usize, String)> = match app.document() {
-        Some(document) => app
-            .document
-            .content_items
-            .iter()
-            .enumerate()
-            .filter_map(|(index, item)| match item {
-                ContentItem::MathBlock { range, .. } => Some((index, document.slice(*range).trim().to_string())),
-                _ => None,
-            })
-            .collect(),
-        None => Vec::new(),
+fn math_cells(extent: f32, limit: u16) -> u16 {
+    ((extent - MATH_CELL_TOLERANCE).ceil().max(1.0) as u16).min(limit.max(1))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct MathGeometry {
+    pub(super) size: Size,
+    rows_per_em: f32,
+    pub(super) content_rows: f32,
+    ascent_rows: f32,
+}
+
+pub(super) fn math_geometry(metrics: MathMetrics, font_size: ratatui_image::FontSize, rows_per_em: f32, limits: Size) -> MathGeometry {
+    let cell_aspect = f32::from(font_size.height.max(1)) / f32::from(font_size.width.max(1));
+    let columns_per_row = (metrics.width + 2.0 * MATH_PADDING_EMS) * cell_aspect;
+    let content_ems = (metrics.height + metrics.depth).max(0.0) + 2.0 * MATH_INK_OVERSHOOT_EMS;
+    let fit = |width: f32, height: f32, rows_per_em: f32| (width / (columns_per_row * rows_per_em)).min(height / (content_ems * rows_per_em)).min(1.0);
+    let rows_per_em = rows_per_em * fit(f32::from(limits.width.max(1)), f32::from(limits.height.max(1)), rows_per_em);
+    let size = Size::new(math_cells(columns_per_row * rows_per_em, limits.width), math_cells(content_ems * rows_per_em, limits.height));
+    let rows_per_em = rows_per_em * fit(f32::from(size.width), f32::from(size.height), rows_per_em);
+    MathGeometry { size, rows_per_em, content_rows: content_ems * rows_per_em, ascent_rows: (metrics.height.max(0.0) + MATH_INK_OVERSHOOT_EMS) * rows_per_em }
+}
+
+impl MathGeometry {
+    pub(super) fn inline_text_row(&self) -> u16 {
+        ((self.ascent_rows - MATH_BASELINE_SLACK).floor().max(0.0) as u16).min(self.size.height.saturating_sub(1))
+    }
+
+    fn raster(&self, font_size: ratatui_image::FontSize, content_top: f32) -> MathRaster {
+        let row_pixels = f32::from(font_size.height.max(1));
+        let padding_rows = (MATH_PADDING_EMS - MATH_INK_OVERSHOOT_EMS) * self.rows_per_em;
+        MathRaster { pixel_height: ((self.content_rows + 2.0 * padding_rows) * row_pixels).round().max(1.0) as u32, offset_y: ((content_top - padding_rows) * row_pixels).round() as i32 }
+    }
+
+    pub(super) fn inline_raster(&self, font_size: ratatui_image::FontSize) -> MathRaster {
+        let slack = (f32::from(self.size.height) - self.content_rows).max(0.0);
+        let content_top = (f32::from(self.inline_text_row()) + TEXT_BASELINE_IN_ROW - self.ascent_rows).clamp(0.0, slack);
+        self.raster(font_size, content_top)
+    }
+
+    pub(super) fn centered_raster(&self, font_size: ratatui_image::FontSize) -> MathRaster {
+        self.raster(font_size, ((f32::from(self.size.height) - self.content_rows) / 2.0).max(0.0))
+    }
+}
+
+pub(super) fn math_block_marker(marker: &str) -> &str {
+    match marker {
+        "-" | "*" | "+" => "•",
+        _ => marker,
+    }
+}
+
+pub(super) fn math_block_offset(marker: &str, indent: u16) -> u16 {
+    let marker = math_block_marker(marker);
+    if marker.is_empty() {
+        indent
+    } else {
+        indent.saturating_add(u16::try_from(marker.width() + 1).unwrap_or(u16::MAX))
+    }
+}
+
+fn failed_math_height(latex: &str, width: u16, block_height: u16) -> u16 {
+    let source_width = latex.split_whitespace().map(|word| word.width() + 1).sum::<usize>();
+    let source_rows = source_width.div_ceil(usize::from(width.max(1))).max(1);
+    u16::try_from(source_rows + 1).unwrap_or(u16::MAX).clamp(2, block_height.max(2))
+}
+
+struct DocumentMath {
+    blocks: Vec<(usize, String, u16)>,
+    inline: Vec<(usize, Vec<(String, bool)>)>,
+}
+
+fn collect_document_math(app: &App) -> DocumentMath {
+    let Some(document) = app.document() else {
+        return DocumentMath { blocks: Vec::new(), inline: Vec::new() };
     };
-    let mut states = vec![None; app.document.content_items.len()];
-    let fallback_color = app.state.theme.foreground;
-    let color = terminal_color_rgb(app.state.theme.content.text, fallback_color);
-    let block_height = app.state.config.effective_latex_height();
-    let image_height = block_height.saturating_sub(2).max(1);
-    let font_size = render_images.then(|| app.images.picker.as_ref().map(|picker| picker.font_size())).flatten();
-    for (item_index, latex) in expressions {
-        let Some(font_size) = font_size else {
-            states[item_index] = Some(MathBlockRenderState::Unsupported { height: block_height });
-            continue;
-        };
-        let style = crate::image_service::MathRenderStyle::Display;
-        let image_key = math_image_key(&latex, color, style);
-        if app.image_load_failed(&image_key) {
-            states[item_index] = Some(MathBlockRenderState::Failed { height: block_height });
-        } else if let Some(dimensions) = app.image_dimensions(&image_key) {
-            let natural = natural_math_size(dimensions, font_size);
-            let available = Size::new(viewport.width.saturating_sub(6).max(1), image_height);
-            states[item_index] = Some(MathBlockRenderState::Ready { image_key, size: fit_math_size(natural, available, image_height) });
-        } else {
-            if !app.is_image_pending(&image_key) {
-                app.request_math_image(&image_key, latex, color, style);
+    let mut math = DocumentMath { blocks: Vec::new(), inline: Vec::new() };
+    for (index, item) in app.document.content_items.iter().enumerate() {
+        match item {
+            ContentItem::MathBlock { range, marker, indent, .. } => math.blocks.push((index, document.slice(*range).trim().to_string(), math_block_offset(document.slice(*marker), *indent))),
+            ContentItem::TextLine { range, heading_level: 0, .. } | ContentItem::TaskItem { text: range, .. } => {
+                let expressions: Vec<(String, bool)> = crate::core::markdown::inline_math(document.slice(*range)).into_iter().map(|expression| (expression.source.to_string(), expression.display)).collect();
+                if !expressions.is_empty() {
+                    math.inline.push((index, expressions));
+                }
             }
-            states[item_index] = Some(MathBlockRenderState::Pending { height: block_height });
+            _ => {}
         }
     }
-    states
+    math
 }
 
-pub(super) fn prepare_inline_math(app: &mut App, viewport: Size, render_images: bool) -> Vec<Vec<InlineMathRenderState>> {
-    let expressions: Vec<(usize, Vec<String>)> = match app.document() {
-        Some(document) => app
-            .document
-            .content_items
-            .iter()
-            .enumerate()
-            .filter_map(|(item_index, item)| {
-                let source = match item {
-                    ContentItem::TextLine { range, heading_level: 0, .. } => document.slice(*range),
-                    ContentItem::TaskItem { text, .. } => document.slice(*text),
-                    _ => return None,
-                };
-                let math = crate::core::markdown::inline_math(source).into_iter().map(|expression| expression.source.to_string()).collect::<Vec<_>>();
-                (!math.is_empty()).then_some((item_index, math))
-            })
-            .collect(),
-        None => Vec::new(),
-    };
-    let mut states = vec![Vec::new(); app.document.content_items.len()];
+fn document_macro_preamble(math: &DocumentMath) -> String {
+    let mut seen = std::collections::HashSet::new();
+    math.blocks.iter().map(|(_, latex, _)| latex.as_str()).chain(math.inline.iter().flat_map(|(_, expressions)| expressions.iter().map(|(latex, _)| latex.as_str()))).flat_map(crate::core::latex::macro_definitions).filter(|definition| seen.insert(*definition)).collect()
+}
+
+fn with_preamble(preamble: &str, latex: String) -> String {
+    if preamble.is_empty() {
+        latex
+    } else {
+        format!("{preamble}{latex}")
+    }
+}
+
+pub(super) fn prepare_math(app: &mut App, viewport: Size, render_images: bool) -> (Vec<Option<MathBlockRenderState>>, Vec<Vec<InlineMathRenderState>>) {
+    let math = collect_document_math(app);
+    let preamble = document_macro_preamble(&math);
+    let mut blocks = vec![None; app.document.content_items.len()];
+    let mut inline = vec![Vec::new(); app.document.content_items.len()];
     let fallback_color = app.state.theme.foreground;
     let color = terminal_color_rgb(app.state.theme.content.text, fallback_color);
     let font_size = render_images.then(|| app.images.picker.as_ref().map(|picker| picker.font_size())).flatten();
-    let max_width = viewport.width.saturating_sub(6).max(1);
-    let preferred_height = app.state.config.effective_inline_latex_height();
-    for (item_index, item_expressions) in expressions {
-        for latex in item_expressions {
+    let block_height = app.state.config.effective_latex_height();
+    let display_rows_per_em = f32::from(block_height.saturating_sub(2).max(1)) / DISPLAY_MATH_REFERENCE_EMS;
+    for (item_index, latex, offset) in math.blocks {
+        let Some(font_size) = font_size else {
+            blocks[item_index] = Some(MathBlockRenderState::Unsupported { height: block_height });
+            continue;
+        };
+        let available_width = viewport.width.saturating_sub(6).saturating_sub(offset).max(1);
+        let image_key = math_image_key(&with_preamble(&preamble, latex.clone()), color, MathRenderStyle::Display);
+        blocks[item_index] = Some(if app.image_load_failed(&image_key) {
+            MathBlockRenderState::Failed { height: failed_math_height(&latex, available_width, block_height) }
+        } else if let Some(metrics) = app.math_metrics(&image_key) {
+            let geometry = math_geometry(metrics, font_size, display_rows_per_em, Size::new(available_width, viewport.height.saturating_sub(2).max(1)));
+            MathBlockRenderState::Ready { image_key, size: geometry.size, raster: geometry.centered_raster(font_size) }
+        } else {
+            if !app.is_image_pending(&image_key) {
+                app.request_math_image(&image_key, with_preamble(&preamble, latex), color, MathRenderStyle::Display);
+            }
+            MathBlockRenderState::Pending { height: block_height }
+        });
+    }
+    let inline_rows_per_em = f32::from(app.state.config.effective_inline_latex_height()) / INLINE_MATH_REFERENCE_EMS;
+    let inline_limits = Size::new(viewport.width.saturating_sub(6).max(1), viewport.height.max(1));
+    for (item_index, expressions) in math.inline {
+        for (latex, display) in expressions {
             let Some(font_size) = font_size else {
-                states[item_index].push(InlineMathRenderState::Unsupported);
+                inline[item_index].push(InlineMathRenderState::Unsupported);
                 continue;
             };
-            let style = crate::image_service::MathRenderStyle::Inline;
+            let style = if display { MathRenderStyle::Display } else { MathRenderStyle::Inline };
+            let latex = with_preamble(&preamble, latex);
             let image_key = math_image_key(&latex, color, style);
-            if app.image_load_failed(&image_key) {
-                states[item_index].push(InlineMathRenderState::Failed);
-            } else if let Some(dimensions) = app.image_dimensions(&image_key) {
-                let natural = natural_math_size(dimensions, font_size);
-                let available = Size::new(max_width, preferred_height.min(viewport.height.max(1)));
-                let size = fit_math_size(natural, available, preferred_height);
-                states[item_index].push(InlineMathRenderState::Ready { image_key, size });
+            inline[item_index].push(if app.image_load_failed(&image_key) {
+                InlineMathRenderState::Failed
+            } else if let Some(metrics) = app.math_metrics(&image_key) {
+                let geometry = math_geometry(metrics, font_size, inline_rows_per_em, inline_limits);
+                InlineMathRenderState::Ready { image_key, size: geometry.size, text_row: geometry.inline_text_row(), raster: geometry.inline_raster(font_size) }
             } else {
                 if !app.is_image_pending(&image_key) {
                     app.request_math_image(&image_key, latex, color, style);
                 }
-                states[item_index].push(InlineMathRenderState::Pending);
-            }
+                InlineMathRenderState::Pending
+            });
         }
     }
-    states
+    (blocks, inline)
 }
 
-fn ensure_math_image_state(app: &mut App, state_key: String, image_key: &str, size: Size) -> String {
+fn rasterize_math(image: &image::DynamicImage, raster: MathRaster, size: Size, font_size: ratatui_image::FontSize) -> image::DynamicImage {
+    let height = raster.pixel_height.max(1);
+    let width = ((f64::from(image.width()) * f64::from(height) / f64::from(image.height().max(1))).round() as u32).max(1);
+    let scaled = image.resize_exact(width, height, image::imageops::FilterType::Triangle).to_rgba8();
+    let mut canvas = image::RgbaImage::new(u32::from(size.width) * u32::from(font_size.width), u32::from(size.height) * u32::from(font_size.height));
+    image::imageops::overlay(&mut canvas, &scaled, 0, i64::from(raster.offset_y));
+    image::DynamicImage::ImageRgba8(canvas)
+}
+
+fn ensure_math_image_state(app: &mut App, state_key: String, image_key: &str, size: Size, raster: MathRaster) -> String {
     if app.touch_image_state(&state_key, size) || size.width == 0 || size.height == 0 {
         return state_key;
     }
@@ -212,7 +304,7 @@ fn ensure_math_image_state(app: &mut App, state_key: String, image_key: &str, si
     };
     let font_size = picker.font_size();
     let protocol_bytes = usize::from(size.width) * usize::from(font_size.width) * usize::from(size.height) * usize::from(font_size.height) * 4;
-    if let Ok(protocol) = SlicedProtocol::new_with_resize(picker, image.as_ref().clone(), size, Resize::Fit(Some(ratatui_image::FilterType::Triangle))) {
+    if let Ok(protocol) = SlicedProtocol::new_with_resize(picker, rasterize_math(image.as_ref(), raster, size, font_size), size, Resize::Fit(None)) {
         app.insert_image_state(state_key.clone(), protocol, size, protocol_bytes);
     }
     state_key
@@ -224,19 +316,28 @@ pub(super) struct MathBlockView<'a> {
     pub(super) state: &'a MathBlockRenderState,
     pub(super) viewport: Rect,
     pub(super) is_cursor: bool,
+    pub(super) marker: &'a str,
+    pub(super) indent: u16,
 }
 
 pub(super) fn render_math_block(f: &mut Frame, app: &mut App, view: MathBlockView<'_>, area: Rect) {
     if view.is_cursor {
         f.render_widget(Paragraph::new("").style(Style::default().bg(app.state.theme.selection)), area);
     }
-    let content_area = Rect { x: area.x.saturating_add(2), width: area.width.saturating_sub(2), ..area };
+    let marker = math_block_marker(view.marker);
+    let offset = math_block_offset(view.marker, view.indent);
+    let body_x = area.x.saturating_add(2).saturating_add(offset);
+    let body_width = area.width.saturating_sub(2).saturating_sub(offset);
+    if !marker.is_empty() {
+        let marker_area = Rect { x: area.x.saturating_add(2).saturating_add(view.indent), width: body_x.saturating_sub(area.x.saturating_add(2).saturating_add(view.indent)), height: 1.min(area.height), ..area };
+        f.render_widget(Paragraph::new(Span::styled(marker, Style::default().fg(app.state.theme.content.list_marker))), marker_area);
+    }
+    let content_area = Rect { x: body_x, width: body_width, ..area };
     match view.state {
-        MathBlockRenderState::Ready { image_key, size } => {
-            let image_area =
-                Rect { x: area.x.saturating_add(2).saturating_add(area.width.saturating_sub(2).saturating_sub(size.width) / 2), y: area.y.saturating_add(1), width: size.width.min(area.width.saturating_sub(2)), height: size.height.min(area.height.saturating_sub(1)) }.intersection(view.viewport);
+        MathBlockRenderState::Ready { image_key, size, raster } => {
+            let image_area = Rect { x: body_x.saturating_add(body_width.saturating_sub(size.width) / 2), y: area.y.saturating_add(1), width: size.width.min(body_width), height: size.height.min(area.height.saturating_sub(1)) }.intersection(view.viewport);
             if image_area.width > 0 && image_area.height > 0 {
-                let state_key = ensure_math_image_state(app, display_math_state_key(view.item_index, image_key), image_key, *size);
+                let state_key = ensure_math_image_state(app, display_math_state_key(view.item_index, image_key), image_key, *size, *raster);
                 if let Some(image_state) = app.images.image_states.get(&state_key) {
                     f.render_widget(SlicedImage::new(&image_state.image, SignedPosition::from((0, 0))), image_area);
                 }
@@ -263,14 +364,14 @@ pub(super) fn render_math_block(f: &mut Frame, app: &mut App, view: MathBlockVie
 
 pub(super) fn render_inline_math(f: &mut Frame, app: &mut App, item_index: usize, states: &[InlineMathRenderState], placements: &[InlineMathPlacement], viewport: Rect) {
     for placement in placements {
-        let Some(InlineMathRenderState::Ready { image_key, size }) = states.get(placement.expression_index) else {
+        let Some(InlineMathRenderState::Ready { image_key, size, text_row, raster }) = states.get(placement.expression_index) else {
             continue;
         };
         let area = placement.rect.intersection(viewport);
         if area.width == 0 || area.height == 0 {
             continue;
         }
-        let state_key = ensure_math_image_state(app, inline_math_state_key(item_index, placement.expression_index, image_key), image_key, *size);
+        let state_key = ensure_math_image_state(app, inline_math_state_key(item_index, placement.expression_index, *text_row, image_key), image_key, *size, *raster);
         if let Some(image_state) = app.images.image_states.get(&state_key) {
             f.render_widget(SlicedImage::new(&image_state.image, SignedPosition::from((0, 0))), area);
         }

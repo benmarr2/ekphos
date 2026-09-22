@@ -71,15 +71,73 @@ mod tests {
         assert_ne!(standalone_image_state_key(7, "image.png"), inline_image_state_key(7, 1, "image.png"));
     }
 
+    const TEST_FONT: ratatui_image::FontSize = ratatui_image::FontSize { width: 16, height: 36 };
+    const TEXT_SUM: crate::image_service::MathMetrics = crate::image_service::MathMetrics { width: 3.247, height: 0.845, depth: 0.345 };
+    const DISPLAYSTYLE_SUM: crate::image_service::MathMetrics = crate::image_service::MathMetrics { width: 2.451, height: 1.731, depth: 1.347 };
+    const LETTER: crate::image_service::MathMetrics = crate::image_service::MathMetrics { width: 0.572, height: 0.431, depth: 0.0 };
+    const QUADRATIC_FORMULA: crate::image_service::MathMetrics = crate::image_service::MathMetrics { width: 7.015, height: 1.59, depth: 0.686 };
+
     #[test]
-    fn display_math_scales_to_the_configured_target_height() {
-        assert_eq!(fit_math_size(Size::new(20, 2), Size::new(80, 6), 6), Size::new(60, 6));
-        assert_eq!(fit_math_size(Size::new(100, 10), Size::new(30, 6), 6), Size::new(30, 3));
+    fn inline_math_shares_one_scale_so_displaystyle_is_larger() {
+        let limits = Size::new(80, 40);
+        let text = math_geometry(TEXT_SUM, TEST_FONT, 1.6, limits);
+        let display = math_geometry(DISPLAYSTYLE_SUM, TEST_FONT, 1.6, limits);
+        let letter = math_geometry(LETTER, TEST_FONT, 1.6, limits);
+        assert_eq!((text.size, text.inline_text_row()), (Size::new(13, 2), 1));
+        assert_eq!((display.size, display.inline_text_row()), (Size::new(10, 5), 2));
+        assert_eq!((letter.size, letter.inline_text_row()), (Size::new(3, 1), 0));
+    }
+
+    #[test]
+    fn math_scale_shrinks_uniformly_to_fit_limits() {
+        let narrow = math_geometry(TEXT_SUM, TEST_FONT, 1.6, Size::new(5, 40));
+        assert_eq!(narrow.size, Size::new(5, 1));
+        let short = math_geometry(DISPLAYSTYLE_SUM, TEST_FONT, 1.6, Size::new(80, 3));
+        assert_eq!(short.size.height, 3);
+        assert!(short.size.width < 10);
+    }
+
+    #[test]
+    fn math_shrinks_slightly_instead_of_clipping_its_last_row() {
+        let tight = crate::image_service::MathMetrics { width: 3.0, height: 0.815, depth: 0.0 };
+        let geometry = math_geometry(tight, TEST_FONT, 2.4, Size::new(200, 40));
+        assert_eq!(geometry.size.height, 2);
+        assert!(geometry.content_rows <= 2.0 + f32::EPSILON, "{}", geometry.content_rows);
+        let raster = geometry.centered_raster(TEST_FONT);
+        assert!(raster.offset_y as f32 + (raster.pixel_height as f32 + geometry.content_rows * 36.0) / 2.0 <= 2.0 * 36.0 + 1.0, "{raster:?}");
+    }
+
+    #[test]
+    fn display_math_reference_keeps_single_line_fractions_at_the_configured_height() {
+        assert_eq!(math_geometry(QUADRATIC_FORMULA, TEST_FONT, 6.0 / 2.5, Size::new(200, 40)).size.height, 6);
+        assert_eq!(math_geometry(LETTER, TEST_FONT, 6.0 / 2.5, Size::new(200, 40)).size.height, 2);
+    }
+
+    #[test]
+    fn inline_raster_aligns_the_math_baseline_with_the_text_row() {
+        let letter = math_geometry(LETTER, TEST_FONT, 1.6, Size::new(80, 40));
+        let raster = letter.inline_raster(TEST_FONT);
+        let baseline = raster.offset_y as f32 + (crate::image_service::MATH_PADDING_EMS + LETTER.height) * 1.6 * 36.0;
+        assert!((baseline - 0.78 * 36.0).abs() <= 1.0, "baseline {baseline}");
+        assert!(raster.offset_y < 0);
+        let display = math_geometry(LETTER, TEST_FONT, 6.0 / 2.5, Size::new(80, 40));
+        let centered = display.centered_raster(TEST_FONT);
+        let ink_top = centered.offset_y as f32 + (centered.pixel_height as f32 - display.content_rows * 36.0) / 2.0;
+        let ink_bottom_gap = f32::from(display.size.height) * 36.0 - ink_top - display.content_rows * 36.0;
+        assert!((ink_top - ink_bottom_gap).abs() <= 1.0, "{ink_top} {ink_bottom_gap}");
+    }
+
+    #[test]
+    fn math_blocks_in_lists_offset_by_their_marker() {
+        assert_eq!(math_block_offset("-", 4), 6);
+        assert_eq!(math_block_offset("12.", 0), 4);
+        assert_eq!(math_block_offset("", 2), 2);
+        assert_eq!(math_block_marker("*"), "•");
     }
 
     #[test]
     fn ready_inline_math_reserves_its_rendered_cell_width() {
-        let states = vec![InlineMathRenderState::Ready { image_key: "math:test".to_string(), size: Size::new(5, 2) }];
+        let states = vec![InlineMathRenderState::Ready { image_key: "math:test".to_string(), size: Size::new(5, 2), text_row: 1, raster: MathRaster::default() }];
         let source = inline_math_layout_source("Energy $E = mc^2$.", &states);
         assert_eq!(source, "Energy □□□□□.");
         let spans = parse_inline_formatting_with_math::<fn(&str) -> bool>("Energy $E = mc^2$.", &Theme::default(), None, None, &states);
@@ -93,8 +151,23 @@ mod tests {
     }
 
     #[test]
+    fn inline_math_rows_extend_above_and_below_the_text_row() {
+        let states = vec![InlineMathRenderState::Ready { image_key: "math:tall".to_string(), size: Size::new(4, 5), text_row: 2, raster: MathRaster::default() }, InlineMathRenderState::Ready { image_key: "math:short".to_string(), size: Size::new(3, 2), text_row: 1, raster: MathRaster::default() }];
+        let spans = parse_inline_formatting_with_math::<fn(&str) -> bool>("With $a$ and $b$", &Theme::default(), None, None, &states);
+        let lines = [Line::from(spans)];
+        assert_eq!(inline_math_visual_height(&lines, &states), 5);
+        assert_eq!(inline_math_source_row_for_click(&lines, &states, 2, 0), Some(0));
+        assert_eq!(inline_math_source_row_for_click(&lines, &states, 4, 0), None);
+        assert_eq!(inline_math_source_row_for_click(&lines, &states, 4, 6), Some(0));
+        let (expanded, placements) = extract_inline_math_placements(lines.to_vec(), &states, Rect::new(0, 10, 40, 5));
+        assert_eq!(expanded.len(), 5);
+        assert!(expanded[2].spans.iter().any(|span| span.content.contains("With")));
+        assert_eq!(placements.iter().map(|placement| (placement.rect.y, placement.rect.height)).collect::<Vec<_>>(), vec![(10, 5), (11, 2)]);
+    }
+
+    #[test]
     fn inline_math_state_stays_aligned_after_other_inline_syntax() {
-        let states = vec![InlineMathRenderState::Ready { image_key: "math:real".to_string(), size: Size::new(4, 1) }];
+        let states = vec![InlineMathRenderState::Ready { image_key: "math:real".to_string(), size: Size::new(4, 1), text_row: 0, raster: MathRaster::default() }];
         let text = r"[literal \(not-math\)](url) then \(real\)";
         assert_eq!(crate::core::markdown::inline_math(text).iter().map(|expression| expression.source).collect::<Vec<_>>(), vec!["real"]);
         let spans = parse_inline_formatting_with_math::<fn(&str) -> bool>(text, &Theme::default(), None, None, &states);

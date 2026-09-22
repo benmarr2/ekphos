@@ -36,8 +36,7 @@ pub fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
     let max_item_height = inner_area.height.max(1);
     let standalone_image_height = app.state.config.effective_image_height();
     let inline_image_height = app.state.config.effective_inline_image_height();
-    let math_blocks = prepare_math_blocks(app, Size::new(inner_area.width, inner_area.height), !skip_images);
-    let inline_math = prepare_inline_math(app, Size::new(inner_area.width, inner_area.height), !skip_images);
+    let (math_blocks, inline_math) = prepare_math(app, Size::new(inner_area.width, inner_area.height), !skip_images);
     let document = app.document.active_document.as_ref().expect("normal-mode content requires a document snapshot");
     let document_tables = &app.document.document_tables;
     let document_link_ranges = &app.document.document_link_ranges;
@@ -344,10 +343,11 @@ pub fn render_content(f: &mut Frame, app: &mut App, area: Rect) {
                     render_inline_thumbnails(f, app, item_idx, chunks[chunk_idx], inner_area, (text_height, inline_image_height), is_cursor_line);
                 }
             }
-            ContentItem::MathBlock { range, .. } => {
+            ContentItem::MathBlock { range, marker, indent, .. } => {
                 let latex = app.document_slice(*range).trim().to_string();
+                let marker = app.document_slice(*marker).to_string();
                 let state = math_blocks.get(item_idx).and_then(Option::as_ref).cloned().unwrap_or(MathBlockRenderState::Unsupported { height: 3 });
-                render_math_block(f, app, MathBlockView { item_index: item_idx, latex: &latex, state: &state, viewport: inner_area, is_cursor: is_cursor_line }, chunks[chunk_idx]);
+                render_math_block(f, app, MathBlockView { item_index: item_idx, latex: &latex, state: &state, viewport: inner_area, is_cursor: is_cursor_line, marker: &marker, indent: *indent }, chunks[chunk_idx]);
             }
             ContentItem::Image { path, .. } => {
                 if !skip_images {

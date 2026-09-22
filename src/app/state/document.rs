@@ -49,6 +49,14 @@ fn range_for_slice(document: &DocumentSnapshot, source_line: usize, slice: &str)
     let relative_start = slice.as_ptr() as usize - line.as_ptr() as usize;
     document.range_within_line(source_line, relative_start..relative_start + slice.len()).unwrap_or_default()
 }
+fn math_block_context(document: &DocumentSnapshot, source_line: usize, line: &str) -> (DocumentRange, u16) {
+    let (marker, indent) = match crate::core::markdown::list_marker(line) {
+        Some(list) => (range_for_slice(document, source_line, &line[list.marker.clone()]), &line[..list.marker.start]),
+        None => (DocumentRange::default(), &line[..line.len() - line.trim_start().len()]),
+    };
+    let columns: usize = indent.chars().map(|character| if character == '\t' { 4 } else { 1 }).sum();
+    (marker, u16::try_from(columns).unwrap_or(u16::MAX))
+}
 fn push_text_line(parsed: &mut ParsedDocument, document: &DocumentSnapshot, source_line: usize, wiki_exists: &dyn Fn(&str) -> bool) {
     let line = document.line(source_line).unwrap_or("");
     let heading = crate::core::markdown::heading(line).filter(|heading| heading.level <= 3 && line[heading.level..].starts_with(' '));
@@ -94,19 +102,25 @@ fn parse_document(document: &DocumentSnapshot, frontmatter: Option<&CompactFront
             continue;
         }
         if let Some(body) = crate::core::markdown::display_math_body(line) {
-            parsed.push_item(ContentItem::MathBlock { range: range_for_slice(document, line_index, body), source_line: line_index as u32, end_line: line_index as u32 }, document, wiki_exists);
+            let (marker, indent) = math_block_context(document, line_index, line);
+            parsed.push_item(ContentItem::MathBlock { range: range_for_slice(document, line_index, body), source_line: line_index as u32, end_line: line_index as u32, marker, indent }, document, wiki_exists);
             line_index += 1;
             continue;
         }
-        if let Some(opening_delimiter) = crate::core::markdown::display_math_opening_delimiter(line) {
+        if let Some(opening) = crate::core::markdown::display_math_opening(line) {
             let opening_line = line_index;
-            let closing_line = crate::core::markdown::find_display_math_closing_line(opening_delimiter, ((opening_line + 1)..document.line_count()).filter_map(|candidate| document.line(candidate).map(|line| (candidate, line))));
+            let closing_line = crate::core::markdown::find_display_math_closing_line(opening.delimiter, ((opening_line + 1)..document.line_count()).filter_map(|candidate| document.line(candidate).map(|line| (candidate, line))));
             if let Some(closing_line) = closing_line {
-                let start = document.line_range(opening_line + 1).map_or_else(|| document.line_range(opening_line).map_or(0, DocumentRange::end), DocumentRange::start);
-                let end = closing_line.checked_sub(1).and_then(|line| document.line_range(line)).map_or(start, DocumentRange::end);
-                let range = DocumentRange::new(start, end);
-                if !document.slice(range).trim().is_empty() {
-                    parsed.push_item(ContentItem::MathBlock { range, source_line: opening_line as u32, end_line: closing_line as u32 }, document, wiki_exists);
+                let start = document.line_range(opening_line).map_or(0, |range| range.start() + opening.body_start);
+                let body_end = document.line(closing_line).and_then(|source| crate::core::markdown::display_math_closing(source, opening.delimiter)).unwrap_or(0);
+                let end = document.line_range(closing_line).map_or(start, |range| range.start() + body_end);
+                let body = document.slice(DocumentRange::new(start, end.max(start)));
+                let trimmed = body.trim();
+                if !trimmed.is_empty() {
+                    let trimmed_start = start + (body.len() - body.trim_start().len());
+                    let range = DocumentRange::new(trimmed_start, trimmed_start + trimmed.len());
+                    let (marker, indent) = math_block_context(document, opening_line, line);
+                    parsed.push_item(ContentItem::MathBlock { range, source_line: opening_line as u32, end_line: closing_line as u32, marker, indent }, document, wiki_exists);
                     line_index = closing_line + 1;
                     continue;
                 }
@@ -1158,12 +1172,32 @@ mod phase6_tests {
             .items
             .iter()
             .filter_map(|item| match item {
-                ContentItem::MathBlock { range, source_line, end_line } => Some((document.slice(*range), *source_line, *end_line)),
+                ContentItem::MathBlock { range, source_line, end_line, .. } => Some((document.slice(*range), *source_line, *end_line)),
                 _ => None,
             })
             .collect();
         assert_eq!(blocks, [("\\int_0^1 x^2 \\, dx\n= \\frac{1}{3}", 1, 4), ("e^{i\\pi}+1=0", 5, 5), ("\\sum_{i=1}^n i", 6, 8), ("x^2 + y^2 = z^2", 9, 9)]);
         assert!(parsed.items.iter().any(|item| matches!(item, ContentItem::CodeLine { range, .. } if document.slice(*range) == "$$not math$$")));
+    }
+
+    #[test]
+    fn display_math_inside_list_items_matches_obsidian() {
+        let source = "- Math expressions\n    - $$x=\\frac{-b}{2a}$$\n    - $$\n      \\begin{align}\n      &a^2 + b^2 = c^2\n      \\end{align} \n      $$\n    - $$ \n      x = \\begin{cases} a & b \\end{cases} \n      $$\n- Insert line break\n\t1. \\[\n\t   y\n\t   \\]\n$$\\begin{aligned}\na&=b\n\\end{aligned}$$\n  $$\n  z\n  $$\n- after";
+        let document = DocumentSnapshot::new(Arc::from(source));
+        let parsed = parse_document(&document, None, 0, true, true, &|_| false);
+        let blocks: Vec<(&str, u32, u32, &str, u16)> = parsed
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ContentItem::MathBlock { range, source_line, end_line, marker, indent } => Some((document.slice(*range), *source_line, *end_line, document.slice(*marker), *indent)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            blocks,
+            [("x=\\frac{-b}{2a}", 1, 1, "-", 4), ("\\begin{align}\n      &a^2 + b^2 = c^2\n      \\end{align}", 2, 6, "-", 4), ("x = \\begin{cases} a & b \\end{cases}", 7, 9, "-", 4), ("y", 11, 13, "1.", 4), ("\\begin{aligned}\na&=b\n\\end{aligned}", 14, 16, "", 0), ("z", 17, 19, "", 2),]
+        );
+        assert!(parsed.items.iter().any(|item| matches!(item, ContentItem::TextLine { range, .. } if document.slice(*range) == "- after")));
     }
 
     #[test]

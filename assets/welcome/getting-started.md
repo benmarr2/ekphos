@@ -61,9 +61,12 @@ Choose an editing mode in `~/.config/ekphos/config.toml`:
 mode = "standard" # or "vim"
 ```
 
-Display equations use `latex_height`, while equations inside prose use
-`inline_latex_height`. The inline default is two terminal rows; use `1` for a
-more compact layout.
+Equations keep one consistent size, like in Obsidian. `latex_height` is the
+number of rows a display fraction such as the quadratic formula takes, and
+`inline_latex_height` is the number of rows a fraction inside prose takes.
+Taller equations, such as matrices, aligned systems, or `\displaystyle` sums,
+grow in proportion. The inline default is two terminal rows; use `1` for a more
+compact layout.
 
 ```toml
 [general]

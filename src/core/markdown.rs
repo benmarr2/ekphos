@@ -62,27 +62,65 @@ pub struct InlineMath<'a> {
     /// Byte range including the opening and closing delimiters.
     pub range: Range<usize>,
     pub source: &'a str,
+    pub display: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayMathDelimiter {
     Dollar,
-    BracketOpen,
-    BracketClose,
+    Bracket,
+}
+
+impl DisplayMathDelimiter {
+    fn opening(self) -> &'static str {
+        match self {
+            Self::Dollar => "$$",
+            Self::Bracket => r"\[",
+        }
+    }
+
+    fn closing(self) -> &'static str {
+        match self {
+            Self::Dollar => "$$",
+            Self::Bracket => r"\]",
+        }
+    }
 }
 
 fn byte_is_escaped(source: &str, index: usize) -> bool {
     source.as_bytes()[..index].iter().rev().take_while(|byte| **byte == b'\\').count() % 2 == 1
 }
 
+fn find_unescaped(source: &str, from: usize, needle: &str) -> Option<usize> {
+    let mut cursor = from;
+    while let Some(relative) = source.get(cursor..)?.find(needle) {
+        let index = cursor + relative;
+        if !byte_is_escaped(source, index) {
+            return Some(index);
+        }
+        cursor = index + 1;
+    }
+    None
+}
+
 /// Parse an inline math expression beginning exactly at `start`.
 ///
 /// Dollar delimiters next to whitespace are rejected to avoid accidental
-/// currency matches. Parenthesized delimiters accept and trim surrounding
-/// whitespace. Code-span exclusion is handled by [`visit_inline_math`].
+/// currency matches. Parenthesized and double-dollar delimiters accept and
+/// trim surrounding whitespace. Code-span exclusion is handled by
+/// [`visit_inline_math`].
 pub fn inline_math_at(source: &str, start: usize) -> Option<InlineMath<'_>> {
     let bytes = source.as_bytes();
-    if bytes.get(start) == Some(&b'$') && !byte_is_escaped(source, start) && bytes.get(start + 1) != Some(&b'$') {
+    if source.get(start..)?.starts_with("$$") && !byte_is_escaped(source, start) {
+        let body_start = start + 2;
+        let end = find_unescaped(source, body_start, "$$")?;
+        let body = source[body_start..end].trim();
+        if body.is_empty() || body.contains('\n') {
+            return None;
+        }
+        return Some(InlineMath { range: start..end + 2, source: body, display: true });
+    }
+    if bytes.get(start) == Some(&b'$') && !byte_is_escaped(source, start) && bytes.get(start + 1) != Some(&b'$') && (start == 0 || bytes[start - 1] != b'$') {
         let body_start = start + 1;
         let first = source.get(body_start..)?.chars().next()?;
         if first.is_whitespace() || first == '$' {
@@ -104,7 +142,7 @@ pub fn inline_math_at(source: &str, start: usize) -> Option<InlineMath<'_>> {
                 cursor = end + 1;
                 continue;
             }
-            return Some(InlineMath { range: start..end + 1, source: body });
+            return Some(InlineMath { range: start..end + 1, source: body, display: false });
         }
         return None;
     }
@@ -122,7 +160,7 @@ pub fn inline_math_at(source: &str, start: usize) -> Option<InlineMath<'_>> {
             if body.is_empty() || body.contains('\n') {
                 return None;
             }
-            return Some(InlineMath { range: start..end + 2, source: body });
+            return Some(InlineMath { range: start..end + 2, source: body, display: false });
         }
     }
     None
@@ -218,60 +256,101 @@ pub fn inline_math(source: &str) -> Vec<InlineMath<'_>> {
     expressions
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListMarker {
+    pub marker: Range<usize>,
+    pub content_start: usize,
+}
+
+pub fn list_marker(line: &str) -> Option<ListMarker> {
+    let trimmed = line.trim_start_matches([' ', '\t']);
+    let marker_start = line.len() - trimmed.len();
+    let marker_len = if trimmed.starts_with(['-', '*', '+']) {
+        1
+    } else {
+        let digits = trimmed.bytes().take_while(u8::is_ascii_digit).count();
+        if !(1..=9).contains(&digits) || !matches!(trimmed.as_bytes().get(digits), Some(b'.' | b')')) {
+            return None;
+        }
+        digits + 1
+    };
+    let rest = &trimmed[marker_len..];
+    let spacing = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+    (spacing > 0).then(|| ListMarker { marker: marker_start..marker_start + marker_len, content_start: marker_start + marker_len + spacing })
+}
+
+pub fn block_content_start(line: &str) -> usize {
+    list_marker(line).map_or_else(|| line.len() - line.trim_start().len(), |marker| marker.content_start)
+}
+
 /// Return the expression from a single-line display-math block (`$$...$$` or
 /// `\[...\]`).
 pub fn display_math_body(line: &str) -> Option<&str> {
-    let trimmed = line.trim();
-    let body = if let Some(body) = trimmed.strip_prefix("$$").and_then(|body| body.strip_suffix("$$")) { body } else { trimmed.strip_prefix(r"\[")?.strip_suffix(r"\]")? }.trim();
-    (!body.is_empty()).then_some(body)
+    let content = line[block_content_start(line)..].trim_end();
+    [DisplayMathDelimiter::Dollar, DisplayMathDelimiter::Bracket].into_iter().find_map(|delimiter| {
+        let inner = content.strip_prefix(delimiter.opening())?.strip_suffix(delimiter.closing())?;
+        if byte_is_escaped(content, content.len() - 2) || find_unescaped(inner, 0, delimiter.closing()).is_some() {
+            return None;
+        }
+        let body = inner.trim();
+        (!body.is_empty()).then_some(body)
+    })
 }
 
-/// Classify a standalone display-math delimiter line.
-pub fn display_math_delimiter(line: &str) -> Option<DisplayMathDelimiter> {
-    match line.trim() {
-        "$$" => Some(DisplayMathDelimiter::Dollar),
-        r"\[" => Some(DisplayMathDelimiter::BracketOpen),
-        r"\]" => Some(DisplayMathDelimiter::BracketClose),
-        _ => None,
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DisplayMathOpening {
+    pub delimiter: DisplayMathDelimiter,
+    pub body_start: usize,
 }
 
-pub fn display_math_delimiters_match(opening: DisplayMathDelimiter, closing: DisplayMathDelimiter) -> bool {
-    matches!((opening, closing), (DisplayMathDelimiter::Dollar, DisplayMathDelimiter::Dollar) | (DisplayMathDelimiter::BracketOpen, DisplayMathDelimiter::BracketClose))
+pub fn display_math_opening(line: &str) -> Option<DisplayMathOpening> {
+    let content_start = block_content_start(line);
+    let content = &line[content_start..];
+    [DisplayMathDelimiter::Dollar, DisplayMathDelimiter::Bracket].into_iter().find_map(|delimiter| {
+        let rest = content.strip_prefix(delimiter.opening())?;
+        if find_unescaped(rest, 0, delimiter.closing()).is_some() || (delimiter == DisplayMathDelimiter::Dollar && rest.starts_with('$')) {
+            return None;
+        }
+        Some(DisplayMathOpening { delimiter, body_start: content_start + delimiter.opening().len() })
+    })
 }
 
-pub fn display_math_opening_delimiter(line: &str) -> Option<DisplayMathDelimiter> {
-    display_math_delimiter(line).filter(|delimiter| !matches!(delimiter, DisplayMathDelimiter::BracketClose))
+pub fn display_math_closing(line: &str, opening: DisplayMathDelimiter) -> Option<usize> {
+    let trimmed = line.trim_end();
+    let body_end = trimmed.strip_suffix(opening.closing())?.len();
+    (!byte_is_escaped(trimmed, body_end)).then_some(body_end)
 }
 
 /// Find the first matching closer after an opening display-math delimiter.
 pub fn find_display_math_closing_line<'a>(opening: DisplayMathDelimiter, lines: impl IntoIterator<Item = (usize, &'a str)>) -> Option<usize> {
-    lines.into_iter().find_map(|(line, source)| display_math_delimiter(source).is_some_and(|closing| display_math_delimiters_match(opening, closing)).then_some(line))
+    lines.into_iter().find_map(|(line, source)| display_math_closing(source, opening).is_some().then_some(line))
 }
 
 /// Advance a multi-line display-math delimiter state. The boolean reports
 /// whether `line` is the matching opening or closing delimiter. A new block is
 /// opened only when `has_matching_closer` confirms that it is complete.
 pub fn update_display_math_block(state: &mut Option<DisplayMathDelimiter>, line: &str, has_matching_closer: impl FnOnce(DisplayMathDelimiter) -> bool) -> bool {
-    let Some(delimiter) = display_math_delimiter(line) else {
-        return false;
-    };
     match *state {
-        Some(opening) if display_math_delimiters_match(opening, delimiter) => {
-            *state = None;
-            true
+        Some(opening) => {
+            let closes = display_math_closing(line, opening).is_some();
+            if closes {
+                *state = None;
+            }
+            closes
         }
-        None if !matches!(delimiter, DisplayMathDelimiter::BracketClose) && has_matching_closer(delimiter) => {
-            *state = Some(delimiter);
-            true
-        }
-        _ => false,
+        None => match display_math_opening(line) {
+            Some(opening) if has_matching_closer(opening.delimiter) => {
+                *state = Some(opening.delimiter);
+                true
+            }
+            _ => false,
+        },
     }
 }
 
 /// Recognize a standalone display-math delimiter line.
 pub fn is_display_math_delimiter(line: &str) -> bool {
-    display_math_delimiter(line).is_some()
+    matches!(line.trim(), "$$" | r"\[" | r"\]")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -507,7 +586,10 @@ mod tests {
         let expressions = inline_math(source);
         assert_eq!(expressions.iter().map(|expression| expression.source).collect::<Vec<_>>(), vec![r"x_1 + \alpha", r"\frac{1}{2}", "y^2"]);
         assert!(inline_math("$ spaced $").is_empty());
-        assert!(inline_math("$$display$$").is_empty());
+        assert_eq!(inline_math("$$display$$"), vec![InlineMath { range: 0..11, source: "display", display: true }]);
+        assert_eq!(inline_math("see $$ \\sum_i x_i $$ here").iter().map(|expression| (expression.source, expression.display)).collect::<Vec<_>>(), vec![(r"\sum_i x_i", true)]);
+        assert!(inline_math("$$x$").is_empty());
+        assert!(inline_math("$$unclosed").is_empty());
         assert!(inline_math(r"\\(escaped\)").is_empty());
         assert!(inline_math(r"\(\)").is_empty());
     }
@@ -547,19 +629,55 @@ mod tests {
         assert_eq!(display_math_body("$$"), None);
         assert_eq!(display_math_body(r"\[\]"), None);
         assert_eq!(display_math_body("price $$5"), None);
-        assert!(display_math_delimiters_match(DisplayMathDelimiter::Dollar, DisplayMathDelimiter::Dollar));
-        assert!(display_math_delimiters_match(DisplayMathDelimiter::BracketOpen, DisplayMathDelimiter::BracketClose));
-        assert!(!display_math_delimiters_match(DisplayMathDelimiter::BracketOpen, DisplayMathDelimiter::Dollar));
+        assert_eq!(display_math_body("$$a$$ and $$b$$"), None);
+        assert_eq!(display_math_body(r"$$ \$ $$"), Some(r"\$"));
 
         let mut block = None;
         assert!(!update_display_math_block(&mut block, r"\[", |_| false));
         assert_eq!(block, None);
         assert!(update_display_math_block(&mut block, r"\[", |_| true));
-        assert_eq!(block, Some(DisplayMathDelimiter::BracketOpen));
+        assert_eq!(block, Some(DisplayMathDelimiter::Bracket));
         assert!(!update_display_math_block(&mut block, "$$", |_| true));
-        assert_eq!(block, Some(DisplayMathDelimiter::BracketOpen));
+        assert_eq!(block, Some(DisplayMathDelimiter::Bracket));
+        assert!(!update_display_math_block(&mut block, r"a \\]", |_| true));
         assert!(update_display_math_block(&mut block, r"\]", |_| false));
         assert_eq!(block, None);
+        assert!(!update_display_math_block(&mut block, r"\]", |_| true));
+        assert_eq!(block, None);
+    }
+
+    #[test]
+    fn display_math_opens_list_items_like_obsidian() {
+        assert_eq!(display_math_body("    - $$x=\\frac{-b}{2a}$$"), Some("x=\\frac{-b}{2a}"));
+        assert_eq!(display_math_body("1. \\[ y \\]"), Some("y"));
+        assert_eq!(display_math_body("- [ ] $$x$$"), None);
+        assert_eq!(display_math_opening("    - $$"), Some(DisplayMathOpening { delimiter: DisplayMathDelimiter::Dollar, body_start: 8 }));
+        assert_eq!(display_math_opening("$$\\begin{align}"), Some(DisplayMathOpening { delimiter: DisplayMathDelimiter::Dollar, body_start: 2 }));
+        assert_eq!(display_math_opening("2) \\["), Some(DisplayMathOpening { delimiter: DisplayMathDelimiter::Bracket, body_start: 5 }));
+        assert_eq!(display_math_opening("$$x$$"), None);
+        assert_eq!(display_math_opening("$$$"), None);
+        assert_eq!(display_math_opening("text $$"), None);
+        assert_eq!(display_math_closing("      $$ ", DisplayMathDelimiter::Dollar), Some(6));
+        assert_eq!(display_math_closing("\\end{align}$$", DisplayMathDelimiter::Dollar), Some(11));
+        assert_eq!(display_math_closing("cost \\$$", DisplayMathDelimiter::Dollar), None);
+        assert_eq!(display_math_closing("$$", DisplayMathDelimiter::Bracket), None);
+
+        let lines = ["    - $$", "      \\begin{align}", "      &a^2 + b^2 = c^2 \\\\", "      \\end{align} ", "      $$", "    - $$ ", "      x", "      $$"];
+        assert_eq!(find_display_math_closing_line(DisplayMathDelimiter::Dollar, lines.iter().copied().enumerate().skip(1)), Some(4));
+        let mut block = None;
+        let delimiter_rows: Vec<usize> = lines.iter().enumerate().filter(|(row, line)| update_display_math_block(&mut block, line, |opening| find_display_math_closing_line(opening, lines.iter().copied().enumerate().skip(row + 1)).is_some())).map(|(row, _)| row).collect();
+        assert_eq!(delimiter_rows, vec![0, 4, 5, 7]);
+    }
+
+    #[test]
+    fn list_markers_cover_unordered_and_ordered_items() {
+        assert_eq!(list_marker("  - item"), Some(ListMarker { marker: 2..3, content_start: 4 }));
+        assert_eq!(list_marker("12. item"), Some(ListMarker { marker: 0..3, content_start: 4 }));
+        assert_eq!(list_marker("3) item"), Some(ListMarker { marker: 0..2, content_start: 3 }));
+        assert_eq!(list_marker("-item"), None);
+        assert_eq!(list_marker("---"), None);
+        assert_eq!(list_marker("1.5 is a number"), None);
+        assert_eq!(block_content_start("   $$"), 3);
     }
 
     #[test]

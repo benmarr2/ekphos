@@ -4,6 +4,11 @@ Notable Ekphos changes are summarized here. The in-app “What’s new” dialog
 
 ## [Unreleased]
 
+### Summary
+
+- Aligned LaTeX rendering with Obsidian: display equations inside list items, `$$` delimiters that share a line with the equation, `$$...$$` inside prose, unnumbered `align`, `equation`, and `gather`, note-wide `\newcommand` macros, and common MathJax commands such as `\label`, `\eqref`, `\DeclareMathOperator`, `multline`, and `eqnarray`.
+- Rendered every equation at one consistent scale, so `\displaystyle` and other tall expressions appear larger than plain inline math and line up with the surrounding text.
+
 ## [0.50.20] - 2026-09-20
 
 ### Summary

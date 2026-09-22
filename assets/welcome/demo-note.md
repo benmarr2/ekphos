@@ -40,7 +40,7 @@ $$
 \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
 $$
 
-Set equation heights in the `[general]` section of `~/.config/ekphos/config.toml`:
+Set equation sizes in the `[general]` section of `~/.config/ekphos/config.toml`:
 
 ```toml
 [general]

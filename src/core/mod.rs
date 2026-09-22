@@ -1,5 +1,6 @@
 //! Stable, platform-independent contracts shared by Ekphos subsystems.
 
+pub mod latex;
 pub mod markdown;
 
 use serde::{Deserialize, Serialize};

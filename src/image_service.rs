@@ -20,11 +20,20 @@ const MAX_MATH_SOURCE_BYTES: usize = 16 * 1024;
 const MATH_FONT_SIZE: f32 = 40.0;
 const MATH_PADDING: f32 = 4.0;
 const MATH_DEVICE_PIXEL_RATIO: f32 = 2.0;
+pub const MATH_PIXELS_PER_EM: f32 = MATH_FONT_SIZE * MATH_DEVICE_PIXEL_RATIO;
+pub const MATH_PADDING_EMS: f32 = MATH_PADDING / MATH_FONT_SIZE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MathRenderStyle {
     Inline,
     Display,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MathMetrics {
+    pub width: f32,
+    pub height: f32,
+    pub depth: f32,
 }
 
 pub trait NetworkImageService: Send + Sync {
@@ -80,7 +89,7 @@ enum WorkerMessage {
 struct ImageResult {
     key: String,
     generation: u64,
-    result: Result<DynamicImage, String>,
+    result: Result<(DynamicImage, Option<MathMetrics>), String>,
 }
 
 struct DecodedEntry {
@@ -102,7 +111,7 @@ pub struct ImageService {
     pending: HashMap<String, u64>,
     failures: HashMap<String, String>,
     decoded: HashMap<String, DecodedEntry>,
-    dimensions: HashMap<String, (u32, u32)>,
+    math_metrics: HashMap<String, MathMetrics>,
     sources: HashMap<String, ImageSource>,
     lru: VecDeque<String>,
     decoded_bytes: usize,
@@ -134,7 +143,7 @@ impl ImageService {
             pending: HashMap::new(),
             failures: HashMap::new(),
             decoded: HashMap::new(),
-            dimensions: HashMap::new(),
+            math_metrics: HashMap::new(),
             sources: HashMap::new(),
             lru: VecDeque::new(),
             decoded_bytes: 0,
@@ -147,7 +156,7 @@ impl ImageService {
         self.pending.clear();
         self.failures.clear();
         self.decoded.clear();
-        self.dimensions.clear();
+        self.math_metrics.clear();
         self.sources.clear();
         self.lru.clear();
         self.decoded_bytes = 0;
@@ -204,7 +213,12 @@ impl ImageService {
             }
             self.pending.remove(&result.key);
             match result.result {
-                Ok(image) => self.insert_decoded(result.key, image),
+                Ok((image, metrics)) => {
+                    if let Some(metrics) = metrics {
+                        self.math_metrics.insert(result.key.clone(), metrics);
+                    }
+                    self.insert_decoded(result.key, image);
+                }
                 Err(error) => {
                     self.failures.insert(result.key, error);
                 }
@@ -220,8 +234,8 @@ impl ImageService {
         Some(image)
     }
 
-    pub fn dimensions(&self, key: &str) -> Option<(u32, u32)> {
-        self.dimensions.get(key).copied()
+    pub fn math_metrics(&self, key: &str) -> Option<MathMetrics> {
+        self.math_metrics.get(key).copied()
     }
 
     pub fn reload(&mut self, key: &str) -> bool {
@@ -314,7 +328,6 @@ impl ImageService {
         }
         let bytes = decoded_image_bytes(&image);
         self.decoded_bytes = self.decoded_bytes.saturating_add(bytes);
-        self.dimensions.insert(key.clone(), (image.width(), image.height()));
         self.lru.push_back(key.clone());
         self.decoded.insert(key, DecodedEntry { image: Arc::new(image), bytes });
         while self.decoded_bytes > self.budget && self.decoded.len() > 1 {
@@ -374,13 +387,13 @@ fn image_worker_loop(receiver: Arc<Mutex<Receiver<WorkerMessage>>>, sender: Sync
         }
     }
 }
-fn load_request(request: &ImageRequest, network: &dyn NetworkImageService) -> Result<DynamicImage, String> {
-    let (image, preserve_resolution) = match &request.source {
-        ImageSource::Local(path) => (decode_path(path)?, false),
+fn load_request(request: &ImageRequest, network: &dyn NetworkImageService) -> Result<(DynamicImage, Option<MathMetrics>), String> {
+    let (image, preserve_resolution, metrics) = match &request.source {
+        ImageSource::Local(path) => (decode_path(path)?, false, None),
         ImageSource::Remote(url) => {
             if request.cache_path.is_file() {
                 match decode_path(&request.cache_path) {
-                    Ok(image) => return Ok(image),
+                    Ok(image) => return Ok((image, None)),
                     Err(_) => {
                         let _ = std::fs::remove_file(&request.cache_path);
                     }
@@ -390,28 +403,30 @@ fn load_request(request: &ImageRequest, network: &dyn NetworkImageService) -> Re
             validate_image(&image)?;
             let image = resize_for_cache(image);
             write_cached_image(&request.cache_path, &image)?;
-            (image, false)
+            (image, false, None)
         }
         ImageSource::Math { latex, color, style } => {
+            let display_list = layout_math(latex, *color, *style)?;
+            let metrics = MathMetrics { width: display_list.width as f32, height: display_list.height as f32, depth: display_list.depth as f32 };
             if request.cache_path.is_file() {
                 match decode_path(&request.cache_path) {
-                    Ok(image) => return Ok(image),
+                    Ok(image) => return Ok((image, Some(metrics))),
                     Err(_) => {
                         let _ = std::fs::remove_file(&request.cache_path);
                     }
                 }
             }
-            let image = render_math_image(latex, *color, *style)?;
+            let image = render_display_list(&display_list)?;
             validate_image(&image)?;
             write_cached_image(&request.cache_path, &image)?;
-            (image, true)
+            (image, true, Some(metrics))
         }
     };
     validate_image(&image)?;
-    Ok(if preserve_resolution { image } else { resize_for_cache(image) })
+    Ok((if preserve_resolution { image } else { resize_for_cache(image) }, metrics))
 }
 
-fn render_math_image(latex: &str, color: [u8; 3], style: MathRenderStyle) -> Result<DynamicImage, String> {
+fn layout_math(latex: &str, color: [u8; 3], style: MathRenderStyle) -> Result<ratex_types::display_item::DisplayList, String> {
     let latex = latex.trim();
     if latex.is_empty() {
         return Err("empty math expression".to_string());
@@ -420,16 +435,19 @@ fn render_math_image(latex: &str, color: [u8; 3], style: MathRenderStyle) -> Res
         return Err("math expression exceeds source limit".to_string());
     }
     let foreground = ratex_types::Color::rgb(color[0] as f32 / 255.0, color[1] as f32 / 255.0, color[2] as f32 / 255.0);
-    let ast = ratex_parser::parse(latex).map_err(|error| format!("math parse error: {error}"))?;
+    let ast = ratex_parser::parse(&crate::core::latex::mathjax_compatible(latex)).map_err(|error| format!("math parse error: {error}"))?;
     let math_style = match style {
         MathRenderStyle::Inline => ratex_types::math_style::MathStyle::Text,
         MathRenderStyle::Display => ratex_types::math_style::MathStyle::Display,
     };
     let layout_options = ratex_layout::LayoutOptions::default().with_style(math_style).with_color(foreground);
     let layout = ratex_layout::layout(&ast, &layout_options);
-    let display_list = ratex_layout::to_display_list(&layout);
-    let pixel_width = display_list.width * f64::from(MATH_FONT_SIZE * MATH_DEVICE_PIXEL_RATIO) + f64::from(2.0 * MATH_PADDING * MATH_DEVICE_PIXEL_RATIO);
-    let pixel_height = display_list.total_height() * f64::from(MATH_FONT_SIZE * MATH_DEVICE_PIXEL_RATIO) + f64::from(2.0 * MATH_PADDING * MATH_DEVICE_PIXEL_RATIO);
+    Ok(ratex_layout::to_display_list(&layout))
+}
+
+fn render_display_list(display_list: &ratex_types::display_item::DisplayList) -> Result<DynamicImage, String> {
+    let pixel_width = display_list.width * f64::from(MATH_PIXELS_PER_EM) + f64::from(2.0 * MATH_PADDING * MATH_DEVICE_PIXEL_RATIO);
+    let pixel_height = display_list.total_height() * f64::from(MATH_PIXELS_PER_EM) + f64::from(2.0 * MATH_PADDING * MATH_DEVICE_PIXEL_RATIO);
     if !pixel_width.is_finite() || !pixel_height.is_finite() || pixel_width <= 0.0 || pixel_height <= 0.0 {
         return Err("math expression has invalid dimensions".to_string());
     }
@@ -437,8 +455,13 @@ fn render_math_image(latex: &str, color: [u8; 3], style: MathRenderStyle) -> Res
         return Err("rendered math expression exceeds image limits".to_string());
     }
     let options = ratex_render::RenderOptions { font_size: MATH_FONT_SIZE, padding: MATH_PADDING, background_color: ratex_types::Color::new(0.0, 0.0, 0.0, 0.0), font_dir: String::new(), device_pixel_ratio: MATH_DEVICE_PIXEL_RATIO };
-    let png = ratex_render::render_to_png(&display_list, &options)?;
+    let png = ratex_render::render_to_png(display_list, &options)?;
     decode_memory(&png)
+}
+
+#[cfg(test)]
+fn render_math_image(latex: &str, color: [u8; 3], style: MathRenderStyle) -> Result<DynamicImage, String> {
+    render_display_list(&layout_math(latex, color, style)?)
 }
 
 fn fetch_remote_image(url: &str) -> Option<DynamicImage> {
@@ -683,7 +706,7 @@ mod tests {
     }
 
     #[test]
-    fn evicted_math_keeps_dimensions_and_reloads_from_its_source() {
+    fn evicted_math_keeps_metrics_and_reloads_from_its_source() {
         let cache = temp_dir("math-eviction");
         let mut service = ImageService::with_budget_and_workers(cache, Arc::new(FixtureNetwork::default()), 1, IMAGE_WORKERS);
         service.begin_document(1);
@@ -693,14 +716,14 @@ mod tests {
         assert_eq!(service.stats().decoded_entries, 1);
         let evicted = if service.decoded("first").is_none() { "first" } else { "second" };
         assert!(service.decoded(evicted).is_none());
-        assert!(service.dimensions("first").is_some_and(|(width, height)| width > 0 && height > 0));
-        assert!(service.dimensions("second").is_some_and(|(width, height)| width > 0 && height > 0));
+        assert!(service.math_metrics("first").is_some_and(|metrics| metrics.width > 0.0 && metrics.depth > 0.0));
+        assert!(service.math_metrics("second").is_some_and(|metrics| metrics.width > 0.0 && metrics.height > 0.0));
         assert!(service.reload(evicted));
         wait_until_idle(&mut service);
         assert!(service.decoded(evicted).is_some());
         assert!(!service.reload("unknown"));
         service.begin_document(2);
-        assert!(service.dimensions("first").is_none());
+        assert!(service.math_metrics("first").is_none());
         assert!(!service.reload("first"));
     }
 

@@ -251,14 +251,7 @@ pub(crate) fn content_item_click_col(app: &App, index: usize, item_area: Rect, m
 }
 
 fn inline_math_states_for_click(app: &App, item_index: usize, source: &str) -> Vec<InlineMathRenderState> {
-    crate::core::markdown::inline_math(source)
-        .into_iter()
-        .enumerate()
-        .map(|(expression_index, _)| {
-            let prefix = format!("math:inline:{item_index}:{expression_index}:");
-            app.images.image_states.iter().find(|(key, _)| key.starts_with(&prefix)).map_or(InlineMathRenderState::Unsupported, |(key, state)| InlineMathRenderState::Ready { image_key: key.clone(), size: state.size })
-        })
-        .collect()
+    (0..crate::core::markdown::inline_math(source).len()).map(|expression_index| cached_inline_math_state(app, item_index, expression_index)).collect()
 }
 
 fn inline_math_column_adjustments(spans: &[Span<'_>], source: &str, states: &[InlineMathRenderState]) -> Vec<(usize, usize, usize)> {
