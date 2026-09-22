@@ -635,6 +635,39 @@ mod tests {
     }
 
     #[test]
+    fn math_beyond_the_decoded_image_budget_stays_rendered_without_reload_churn() {
+        let equation = r"Q_{m,INDEX} =\underbrace{\frac{C_{0,i}}{2}\sum_{n=1}^{N}\psi_{n,i}\,\omega_{n}}_{S_{sc,i}} +\underbrace{\frac{C_{f,i}}{2}\sum_{n=1}^{N}\psi_{n,i}\,\omega_{n}}_{S_{f,i}} +\frac{S_{m,i}}{\sigma_{t,i}} =S_{sc,i}+S_{f,i}+\frac{S_{m,i}}{\sigma_{t,i}}";
+        let mut content = String::from("# Budget\n\n");
+        for index in 0..8 {
+            content.push_str(&format!("$$\n{}\n$$\n\n", equation.replace("INDEX", &index.to_string())));
+        }
+        let mut fixture = GoldenApp::with_content(&content);
+        fixture.app.images.picker = Some(Picker::halfblocks());
+        let backend = TestBackend::new(100, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            terminal.draw(|frame| render(frame, &mut fixture.app)).unwrap();
+            if !fixture.app.image_has_background_work() || Instant::now() > deadline {
+                break;
+            }
+            while fixture.app.image_has_background_work() && Instant::now() < deadline {
+                fixture.app.poll_pending_images();
+                std::thread::yield_now();
+            }
+        }
+        assert!(fixture.app.images.worker.stats().decoded_entries < 8, "fixture must exceed the decoded image budget");
+        for _ in 0..3 {
+            terminal.draw(|frame| render(frame, &mut fixture.app)).unwrap();
+            assert!(!fixture.app.image_has_background_work());
+        }
+        let buffer = terminal.backend().buffer();
+        let symbols = (0..buffer.area.height).flat_map(|y| (0..buffer.area.width).map(move |x| buffer[(x, y)].symbol())).collect::<String>();
+        assert!(!symbols.contains("Rendering equation"), "{symbols}");
+        assert!(fixture.app.images.image_states.keys().any(|key| key.starts_with("math:block:")));
+    }
+
+    #[test]
     fn links_after_rendered_inline_math_keep_their_click_target() {
         let mut fixture = GoldenApp::with_content("# Math link\n\nBefore $\\frac{a}{b}$ [docs](https://example.test) after.\n");
         fixture.app.images.picker = Some(Picker::halfblocks());

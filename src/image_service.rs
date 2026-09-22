@@ -102,6 +102,8 @@ pub struct ImageService {
     pending: HashMap<String, u64>,
     failures: HashMap<String, String>,
     decoded: HashMap<String, DecodedEntry>,
+    dimensions: HashMap<String, (u32, u32)>,
+    sources: HashMap<String, ImageSource>,
     lru: VecDeque<String>,
     decoded_bytes: usize,
     budget: usize,
@@ -132,6 +134,8 @@ impl ImageService {
             pending: HashMap::new(),
             failures: HashMap::new(),
             decoded: HashMap::new(),
+            dimensions: HashMap::new(),
+            sources: HashMap::new(),
             lru: VecDeque::new(),
             decoded_bytes: 0,
             budget,
@@ -143,6 +147,8 @@ impl ImageService {
         self.pending.clear();
         self.failures.clear();
         self.decoded.clear();
+        self.dimensions.clear();
+        self.sources.clear();
         self.lru.clear();
         self.decoded_bytes = 0;
         self.drain_stale_results();
@@ -164,10 +170,11 @@ impl ImageService {
             return false;
         }
         let generation = self.generation.load(Ordering::Acquire);
-        let request = ImageRequest { key: key.to_string(), source, cache_path: self.cache_path(key), generation };
+        let request = ImageRequest { key: key.to_string(), source: source.clone(), cache_path: self.cache_path(key), generation };
         match self.request_sender.try_send(WorkerMessage::Load(request)) {
             Ok(()) => {
                 self.pending.insert(key.to_string(), generation);
+                self.sources.insert(key.to_string(), source);
                 self.ensure_workers();
                 if self.workers.is_empty() {
                     self.pending.remove(key);
@@ -211,6 +218,17 @@ impl ImageService {
         let image = Arc::clone(&self.decoded.get(key)?.image);
         self.touch(key);
         Some(image)
+    }
+
+    pub fn dimensions(&self, key: &str) -> Option<(u32, u32)> {
+        self.dimensions.get(key).copied()
+    }
+
+    pub fn reload(&mut self, key: &str) -> bool {
+        let Some(source) = self.sources.get(key).cloned() else {
+            return false;
+        };
+        self.request(key, source)
     }
 
     pub fn insert_ready(&mut self, key: &str, image: DynamicImage) -> Result<(), String> {
@@ -296,6 +314,7 @@ impl ImageService {
         }
         let bytes = decoded_image_bytes(&image);
         self.decoded_bytes = self.decoded_bytes.saturating_add(bytes);
+        self.dimensions.insert(key.clone(), (image.width(), image.height()));
         self.lru.push_back(key.clone());
         self.decoded.insert(key, DecodedEntry { image: Arc::new(image), bytes });
         while self.decoded_bytes > self.budget && self.decoded.len() > 1 {
@@ -532,6 +551,13 @@ mod tests {
             std::thread::yield_now();
         }
     }
+    fn wait_until_idle(service: &mut ImageService) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while service.stats().pending_requests > 0 && Instant::now() < deadline {
+            service.poll();
+            std::thread::yield_now();
+        }
+    }
 
     #[test]
     fn every_previously_default_image_decoder_remains_enabled() {
@@ -654,6 +680,28 @@ mod tests {
         service.insert_ready("two", DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 2, Rgba([2, 2, 2, 255])))).unwrap();
         assert_eq!(service.stats().decoded_entries, 1);
         assert!(service.decoded_bytes() > 4);
+    }
+
+    #[test]
+    fn evicted_math_keeps_dimensions_and_reloads_from_its_source() {
+        let cache = temp_dir("math-eviction");
+        let mut service = ImageService::with_budget_and_workers(cache, Arc::new(FixtureNetwork::default()), 1, IMAGE_WORKERS);
+        service.begin_document(1);
+        assert!(service.request_math("first", r"\frac{a}{b}".to_string(), [255, 255, 255], MathRenderStyle::Display));
+        assert!(service.request_math("second", r"x^2 + y^2 = z^2".to_string(), [255, 255, 255], MathRenderStyle::Display));
+        wait_until_idle(&mut service);
+        assert_eq!(service.stats().decoded_entries, 1);
+        let evicted = if service.decoded("first").is_none() { "first" } else { "second" };
+        assert!(service.decoded(evicted).is_none());
+        assert!(service.dimensions("first").is_some_and(|(width, height)| width > 0 && height > 0));
+        assert!(service.dimensions("second").is_some_and(|(width, height)| width > 0 && height > 0));
+        assert!(service.reload(evicted));
+        wait_until_idle(&mut service);
+        assert!(service.decoded(evicted).is_some());
+        assert!(!service.reload("unknown"));
+        service.begin_document(2);
+        assert!(service.dimensions("first").is_none());
+        assert!(!service.reload("first"));
     }
 
     #[test]

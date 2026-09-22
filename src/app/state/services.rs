@@ -152,6 +152,12 @@ impl App {
     pub fn decoded_image(&mut self, key: &str) -> Option<Arc<DynamicImage>> {
         self.images.worker.decoded(key)
     }
+    pub fn image_dimensions(&self, key: &str) -> Option<(u32, u32)> {
+        self.images.worker.dimensions(key)
+    }
+    pub fn reload_image(&mut self, key: &str) {
+        self.images.worker.reload(key);
+    }
 
     pub fn image_load_failed(&self, key: &str) -> bool {
         self.images.worker.is_failed(key)

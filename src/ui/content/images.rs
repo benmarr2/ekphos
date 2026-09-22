@@ -90,6 +90,11 @@ fn inline_math_state_key(item_index: usize, expression_index: usize, image_key: 
     format!("math:inline:{item_index}:{expression_index}:{image_key}")
 }
 
+fn natural_math_size((width, height): (u32, u32), font_size: ratatui_image::FontSize) -> Size {
+    let cells = |pixels: u32, cell: u16| u16::try_from(pixels.div_ceil(u32::from(cell.max(1)))).unwrap_or(u16::MAX);
+    Size::new(cells(width, font_size.width), cells(height, font_size.height))
+}
+
 pub(super) fn fit_math_size(natural: Size, available: Size, preferred_height: u16) -> Size {
     let max_width = available.width.max(1);
     let max_height = available.height.max(1);
@@ -126,12 +131,12 @@ pub(super) fn prepare_math_blocks(app: &mut App, viewport: Size, render_images: 
         };
         let style = crate::image_service::MathRenderStyle::Display;
         let image_key = math_image_key(&latex, color, style);
-        if let Some(image) = app.decoded_image(&image_key) {
-            let natural = Resize::natural_size(image.as_ref(), font_size);
+        if app.image_load_failed(&image_key) {
+            states[item_index] = Some(MathBlockRenderState::Failed { height: block_height });
+        } else if let Some(dimensions) = app.image_dimensions(&image_key) {
+            let natural = natural_math_size(dimensions, font_size);
             let available = Size::new(viewport.width.saturating_sub(6).max(1), image_height);
             states[item_index] = Some(MathBlockRenderState::Ready { image_key, size: fit_math_size(natural, available, image_height) });
-        } else if app.image_load_failed(&image_key) {
-            states[item_index] = Some(MathBlockRenderState::Failed { height: block_height });
         } else {
             if !app.is_image_pending(&image_key) {
                 app.request_math_image(&image_key, latex, color, style);
@@ -175,13 +180,13 @@ pub(super) fn prepare_inline_math(app: &mut App, viewport: Size, render_images: 
             };
             let style = crate::image_service::MathRenderStyle::Inline;
             let image_key = math_image_key(&latex, color, style);
-            if let Some(image) = app.decoded_image(&image_key) {
-                let natural = Resize::natural_size(image.as_ref(), font_size);
+            if app.image_load_failed(&image_key) {
+                states[item_index].push(InlineMathRenderState::Failed);
+            } else if let Some(dimensions) = app.image_dimensions(&image_key) {
+                let natural = natural_math_size(dimensions, font_size);
                 let available = Size::new(max_width, preferred_height.min(viewport.height.max(1)));
                 let size = fit_math_size(natural, available, preferred_height);
                 states[item_index].push(InlineMathRenderState::Ready { image_key, size });
-            } else if app.image_load_failed(&image_key) {
-                states[item_index].push(InlineMathRenderState::Failed);
             } else {
                 if !app.is_image_pending(&image_key) {
                     app.request_math_image(&image_key, latex, color, style);
@@ -199,14 +204,16 @@ fn ensure_math_image_state(app: &mut App, state_key: String, image_key: &str, si
     }
     app.remove_image_state(&state_key);
     let Some(image) = app.decoded_image(image_key) else {
+        app.reload_image(image_key);
         return state_key;
     };
     let Some(picker) = app.images.picker.as_ref() else {
         return state_key;
     };
-    let source_bytes = crate::image_service::decoded_image_bytes(image.as_ref());
-    if let Ok(protocol) = SlicedProtocol::new_with_resize(picker, image.as_ref().clone(), size, Resize::Fit(None)) {
-        app.insert_image_state(state_key.clone(), protocol, size, source_bytes);
+    let font_size = picker.font_size();
+    let protocol_bytes = usize::from(size.width) * usize::from(font_size.width) * usize::from(size.height) * usize::from(font_size.height) * 4;
+    if let Ok(protocol) = SlicedProtocol::new_with_resize(picker, image.as_ref().clone(), size, Resize::Fit(Some(ratatui_image::FilterType::Triangle))) {
+        app.insert_image_state(state_key.clone(), protocol, size, protocol_bytes);
     }
     state_key
 }
