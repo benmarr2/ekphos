@@ -26,6 +26,7 @@ pub(super) fn handle_vim_insert_mode(app: &mut App, key: crossterm::event::KeyEv
             app.editor.vim.mode = VimMode::Normal;
             app.start_buffer_search();
         }
+        KeyCode::Char('v') if key.modifiers == KeyModifiers::CONTROL => paste_into_editor(app, None),
         KeyCode::Tab if key.modifiers.is_empty() && app.editor.indent_selected_lines() => {}
         KeyCode::Tab if key.modifiers.is_empty() && app.editor.indent_current_list_item() => {}
         KeyCode::BackTab if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) => {

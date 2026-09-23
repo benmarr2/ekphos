@@ -1,5 +1,6 @@
 //! Filesystem-facing vault services for Ekphos.
 
+pub mod attachments;
 mod frontmatter;
 pub mod journal;
 

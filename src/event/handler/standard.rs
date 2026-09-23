@@ -152,9 +152,11 @@ pub(super) fn apply_editing_mode(app: &mut App, mode: EditingMode) {
 mod tests {
     use super::*;
     use crate::app::AppDependencies;
+    use crate::clipboard::{Clipboard, MemoryClipboard};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
 
     static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
 
@@ -162,6 +164,7 @@ mod tests {
         app: App,
         root: PathBuf,
         note_path: PathBuf,
+        clipboard: Arc<MemoryClipboard>,
     }
 
     impl StandardApp {
@@ -173,12 +176,20 @@ mod tests {
             let note_path = vault.join("fixture.md");
             fs::write(&note_path, "hello world").unwrap();
             let config = Config { general: crate::config::GeneralConfig { welcome_shown: false, check_updates: false, ..Default::default() }, editor: crate::config::EditorConfig { mode: EditingMode::Standard, ..Default::default() }, ..Default::default() };
-            let dependencies = AppDependencies::headless(root.join("config"), root.join("cache"));
+            let clipboard = Arc::new(MemoryClipboard::default());
+            let mut dependencies = AppDependencies::headless(root.join("config"), root.join("cache"));
+            dependencies.clipboard = clipboard.clone();
             let mut app = App::new_injected(config, vault, None, dependencies);
             app.state.show_welcome = false;
             app.state.dialog = DialogState::None;
             app.enter_edit_mode();
-            Self { app, root, note_path }
+            Self { app, root, note_path, clipboard }
+        }
+
+        fn attachments(&self) -> Vec<PathBuf> {
+            let mut paths: Vec<PathBuf> = fs::read_dir(self.root.join("vault/attachments")).map(|entries| entries.map(|entry| entry.unwrap().path()).collect()).unwrap_or_default();
+            paths.sort();
+            paths
         }
     }
 
@@ -221,6 +232,100 @@ mod tests {
         handle_standard_mode(&mut fixture.app, key(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(fixture.app.state.dialog, DialogState::UnsavedChanges);
         assert_eq!(fixture.app.editor.mode, Mode::Edit);
+    }
+
+    #[test]
+    fn ctrl_v_saves_clipboard_image_data_as_a_linked_attachment() {
+        let mut fixture = StandardApp::new();
+        fixture.clipboard.set_image_png(b"png bytes".to_vec());
+        fixture.app.editor.set_cursor(0, 0);
+        handle_standard_mode(&mut fixture.app, key(KeyCode::Char('v'), KeyModifiers::CONTROL));
+        let attachments = fixture.attachments();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(fs::read(&attachments[0]).unwrap(), b"png bytes");
+        let name = attachments[0].file_name().unwrap().to_str().unwrap();
+        assert!(name.starts_with("Pasted image ") && name.ends_with(".png"), "{name}");
+        assert_eq!(fixture.app.editor.text(), format!("![](attachments/{})hello world", name.replace(' ', "%20")));
+        assert_eq!(fixture.app.resolve_image_path(&format!("attachments/{}", name.replace(' ', "%20"))), Some(attachments[0].clone()));
+    }
+
+    #[test]
+    fn clipboard_text_wins_over_image_data() {
+        let mut fixture = StandardApp::new();
+        fixture.clipboard.set_image_png(b"png bytes".to_vec());
+        fixture.clipboard.set_text("pasted ").unwrap();
+        fixture.app.editor.set_cursor(0, 0);
+        handle_standard_mode(&mut fixture.app, key(KeyCode::Char('v'), KeyModifiers::CONTROL));
+        assert_eq!(fixture.app.editor.text(), "pasted hello world");
+        assert!(fixture.attachments().is_empty());
+    }
+
+    #[test]
+    fn copied_image_files_are_copied_into_the_attachments_folder() {
+        let mut fixture = StandardApp::new();
+        let photo = fixture.root.join("photo.png");
+        fs::write(&photo, b"photo").unwrap();
+        fixture.clipboard.set_text("photo.png").unwrap();
+        fixture.clipboard.set_files([photo.clone()]);
+        fixture.app.editor.set_cursor(0, 0);
+        handle_standard_mode(&mut fixture.app, key(KeyCode::Char('v'), KeyModifiers::CONTROL));
+        assert_eq!(fixture.attachments(), vec![fixture.root.join("vault/attachments/photo.png")]);
+        assert_eq!(fs::read(fixture.root.join("vault/attachments/photo.png")).unwrap(), b"photo");
+        assert_eq!(fixture.app.editor.text(), "![](attachments/photo.png)hello world");
+        assert!(photo.exists());
+    }
+
+    #[test]
+    fn attachments_dir_can_follow_the_current_note() {
+        let mut fixture = StandardApp::new();
+        fixture.app.state.config.attachments_dir = "./assets".to_string();
+        fixture.clipboard.set_image_png(b"png bytes".to_vec());
+        fixture.app.editor.set_cursor(0, 0);
+        handle_standard_mode(&mut fixture.app, key(KeyCode::Char('v'), KeyModifiers::CONTROL));
+        assert_eq!(fs::read_dir(fixture.root.join("vault/assets")).unwrap().count(), 1);
+        assert!(fixture.app.editor.text().starts_with("![](assets/Pasted%20image%20"));
+    }
+
+    #[test]
+    fn invalid_attachments_dir_reports_an_error_without_pasting() {
+        let mut fixture = StandardApp::new();
+        fixture.app.state.config.attachments_dir = "../outside".to_string();
+        fixture.clipboard.set_image_png(b"png bytes".to_vec());
+        handle_standard_mode(&mut fixture.app, key(KeyCode::Char('v'), KeyModifiers::CONTROL));
+        assert_eq!(fixture.app.editor.text(), "hello world");
+        assert!(fixture.app.state.toast.as_ref().is_some_and(|toast| toast.message.starts_with("Couldn't paste image: attachments_dir")));
+        assert!(!fixture.root.join("outside").exists());
+    }
+
+    #[test]
+    fn vim_clipboard_register_put_pastes_images() {
+        let mut fixture = StandardApp::new();
+        fixture.app.state.config.editor.mode = EditingMode::Vim;
+        fixture.app.editor.vim.mode = VimMode::Normal;
+        fixture.clipboard.set_image_png(b"png bytes".to_vec());
+        fixture.app.editor.set_cursor(0, 4);
+        for character in ['"', '+', 'p'] {
+            handle_edit_mode(&mut fixture.app, key(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        let attachments = fixture.attachments();
+        assert_eq!(attachments.len(), 1);
+        let name = attachments[0].file_name().unwrap().to_str().unwrap().replace(' ', "%20");
+        assert_eq!(fixture.app.editor.text(), format!("hello![](attachments/{name}) world"));
+    }
+
+    #[test]
+    fn vim_insert_ctrl_v_pastes_images() {
+        let mut fixture = StandardApp::new();
+        fixture.app.state.config.editor.mode = EditingMode::Vim;
+        fixture.app.editor.vim.mode = VimMode::Insert;
+        fixture.clipboard.set_image_png(b"png bytes".to_vec());
+        fixture.app.editor.set_cursor(0, 5);
+        handle_edit_mode(&mut fixture.app, key(KeyCode::Char('v'), KeyModifiers::CONTROL));
+        let attachments = fixture.attachments();
+        assert_eq!(attachments.len(), 1);
+        let name = attachments[0].file_name().unwrap().to_str().unwrap().replace(' ', "%20");
+        assert_eq!(fixture.app.editor.text(), format!("hello![](attachments/{name}) world"));
+        assert_eq!(fixture.app.editor.vim.mode, VimMode::Insert);
     }
 
     #[test]

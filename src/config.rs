@@ -37,6 +37,8 @@ pub struct GeneralConfig {
     pub notes_dir: String,
     #[serde(default = "default_journal_dir")]
     pub journal_dir: String,
+    #[serde(default = "default_attachments_dir")]
+    pub attachments_dir: String,
     #[serde(default = "default_welcome_shown")]
     pub welcome_shown: bool,
     #[serde(default = "default_theme_name")]
@@ -195,6 +197,9 @@ fn default_notes_dir() -> String {
 fn default_journal_dir() -> String {
     "Journal".to_string()
 }
+fn default_attachments_dir() -> String {
+    "attachments".to_string()
+}
 fn default_welcome_shown() -> bool {
     true
 }
@@ -254,6 +259,7 @@ impl Default for GeneralConfig {
         Self {
             notes_dir: default_notes_dir(),
             journal_dir: default_journal_dir(),
+            attachments_dir: default_attachments_dir(),
             welcome_shown: default_welcome_shown(),
             theme: default_theme_name(),
             show_empty_dir: default_show_empty_dir(),
@@ -1197,6 +1203,18 @@ mod tests {
         assert_eq!(config.journal_dir, "Personal/Daily Notes");
         let serialized = toml::to_string_pretty(&config).unwrap();
         assert!(serialized.contains("journal_dir = \"Personal/Daily Notes\""));
+    }
+    #[test]
+    fn attachments_directory_defaults_when_missing_from_toml() {
+        let config: Config = toml::from_str("notes_dir = '/tmp/notes'").unwrap();
+        assert_eq!(config.attachments_dir, "attachments");
+    }
+    #[test]
+    fn attachments_directory_deserializes_and_serializes_custom_value() {
+        let config: Config = toml::from_str("attachments_dir = './assets'").unwrap();
+        assert_eq!(config.attachments_dir, "./assets");
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        assert!(serialized.contains("attachments_dir = \"./assets\""));
     }
     #[test]
     fn panel_widths_default_when_missing_from_toml() {

@@ -52,6 +52,22 @@ Helix mode uses selections as cursors. Use `v` to extend selections, `C` to add 
 
 Helix shortcuts take priority while editing. For example, Ctrl+S saves a selection to the jump list; use `:w` to save the note. `Space f` opens the note picker and `Space /` opens content search after saving any edits. Features that need language servers, tree-sitter, split windows, or shell integration are not available in Ekphos.
 
+## Pasting images
+
+Paste an image while editing a note to save it in your vault and insert a Markdown link to it. Press Ctrl+V in Standard mode or in Vim and Helix Insert mode. From Vim Normal mode, use `"+p`. From Helix Normal mode, use `Space p`. You can also right-click and choose Paste in any mode. Screenshots and other image data are saved as `Pasted image <timestamp>.png`. Copied image files keep their names, and images already in your vault are linked where they are. If the clipboard also holds text, the text is pasted instead.
+
+New images go to the `attachments` folder at the root of your vault. To change this, set `attachments_dir`:
+
+```toml
+[general]
+attachments_dir = "./assets"
+```
+
+- `"attachments"` or any other relative path: a folder inside your vault
+- `""`: the vault root
+- `"./"`: the current note's folder
+- `"./assets"`: a subfolder of the current note's folder
+
 ## Building from source
 
 ```bash

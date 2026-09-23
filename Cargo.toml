@@ -38,7 +38,7 @@ tikv-jemallocator = { version = "=0.7.0", default-features = false }
 tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
-clipboard-rs = { version = "0.3", default-features = false, features = ["wayland"] }
+clipboard-rs = { version = "0.3", default-features = false, features = ["image", "wayland"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

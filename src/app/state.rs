@@ -292,6 +292,7 @@ impl AppBuilder {
     }
 }
 
+mod attachments;
 mod document;
 mod editing;
 mod graph_state;

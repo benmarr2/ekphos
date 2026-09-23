@@ -393,6 +393,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dbadf7a82795a94d37b74f92f60879306b21dafd9e85c24114a9ac46d3135b8d"
 dependencies = [
  "clipboard-win",
+ "image",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",

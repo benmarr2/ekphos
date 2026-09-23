@@ -594,11 +594,15 @@ pub(super) fn handle_vim_normal_mode(app: &mut App, key: crossterm::event::KeyEv
             app.editor.vim.reset_pending();
         }
         KeyCode::Char('p') => {
-            app.editor.paste_after();
+            if !paste_clipboard_register_image(app, true) {
+                app.editor.paste_after();
+            }
             app.editor.vim.reset_pending();
         }
         KeyCode::Char('P') => {
-            app.editor.paste_before();
+            if !paste_clipboard_register_image(app, false) {
+                app.editor.paste_before();
+            }
             app.editor.vim.reset_pending();
         }
         KeyCode::Char('u') if key.modifiers.is_empty() => {
@@ -682,6 +686,28 @@ pub(super) fn handle_vim_normal_mode(app: &mut App, key: crossterm::event::KeyEv
             app.editor.vim.reset_pending();
             app.editor.pending_operator = None;
         }
+    }
+}
+
+fn paste_clipboard_register_image(app: &mut App, after: bool) -> bool {
+    if !app.editor.vim.registers.is_clipboard_selected() {
+        return false;
+    }
+    match app.clipboard_image_link() {
+        Some(Ok(link)) => {
+            if after {
+                let (row, col) = app.editor.cursor();
+                let line_len = app.editor.line(row).map_or(0, |line| line.chars().count());
+                app.editor.set_cursor(row, (col + 1).min(line_len));
+            }
+            app.editor.insert_str(&link);
+            true
+        }
+        Some(Err(error)) => {
+            app.editor.vim.status_message = Some(error);
+            true
+        }
+        None => false,
     }
 }
 
