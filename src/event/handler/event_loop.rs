@@ -30,13 +30,13 @@ pub(super) fn update_cursor_style(app: &mut App) {
     let terminal_style = match (app.state.config.editor.mode, app.editor.vim.mode) {
         (EditingMode::Standard, _) | (EditingMode::Vim, VimMode::Insert) => SetCursorStyle::SteadyBar,
         (EditingMode::Vim, VimMode::Replace) => SetCursorStyle::SteadyUnderScore,
-        (EditingMode::Vim, _) => SetCursorStyle::SteadyBlock,
+        (EditingMode::Vim, _) | (EditingMode::Helix, _) => SetCursorStyle::SteadyBlock,
     };
     write_term_control(terminal_style);
     let editor_shape = match (app.state.config.editor.mode, app.editor.vim.mode) {
         (EditingMode::Standard, _) | (EditingMode::Vim, VimMode::Insert) => CursorShape::Bar,
         (EditingMode::Vim, VimMode::Replace) => CursorShape::Underline,
-        (EditingMode::Vim, _) => CursorShape::Block,
+        (EditingMode::Vim, _) | (EditingMode::Helix, _) => CursorShape::Block,
     };
     app.editor.set_cursor_shape(editor_shape);
 }
@@ -81,7 +81,7 @@ pub fn run_app(terminal: &mut Terminal<CrosstermBackend<Box<dyn io::Write>>>, ap
                 if process_events(terminal, app, &mut needs_render)? {
                     return Ok(());
                 }
-            } else if app.editor.mouse_button_held && app.editor.mode == Mode::Edit && app.editor.has_selection() {
+            } else if app.editor.mouse_button_held && app.editor.mode == Mode::Edit && (app.editor.has_selection() || (app.state.config.editor.mode == EditingMode::Helix && app.editor.helix_primary().is_some_and(|selection| selection.anchor != selection.head))) {
                 handle_continuous_auto_scroll(app);
                 needs_render = true;
             }

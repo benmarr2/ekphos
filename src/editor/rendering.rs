@@ -84,6 +84,11 @@ impl Editor {
             if line_len == 0 {
                 if is_cursor_line {
                     self.render_cursor_at(buf, content_start_x, screen_y, ' ', Style::default());
+                } else if self.helix_render_heads.binary_search(&Position::new(row, 0)).is_ok() {
+                    if let Some(cell) = buf.cell_mut((content_start_x, screen_y)) {
+                        cell.set_char(' ');
+                        cell.set_style(self.selection_style.add_modifier(Modifier::REVERSED));
+                    }
                 }
                 screen_y += 1;
                 let Some(next_row) = self.next_visible_row(row) else { break };
@@ -142,6 +147,11 @@ impl Editor {
                 }
                 if is_cursor_line && cursor_pos.col >= line_len && chars.peek().is_none() && x < area.x + area.width {
                     self.render_cursor_at(buf, x, screen_y, ' ', Style::default());
+                } else if chars.peek().is_none() && self.helix_render_heads.binary_search(&Position::new(row, line_len)).is_ok() && x < area.x + area.width {
+                    if let Some(cell) = buf.cell_mut((x, screen_y)) {
+                        cell.set_char(' ');
+                        cell.set_style(self.selection_style.add_modifier(Modifier::REVERSED));
+                    }
                 }
                 let marker_x = if is_cursor_line && cursor_pos.col >= line_len { x + 1 } else { x };
                 if chars.peek().is_none() && self.is_heading_folded(row) && marker_x + 1 < content_end_x {
@@ -230,6 +240,11 @@ impl Editor {
             }
             if is_cursor_line && cursor_pos.col >= line_len && x < area.x + area.width {
                 self.render_cursor_at(buf, x, y, ' ', Style::default());
+            } else if self.helix_render_heads.binary_search(&Position::new(row, line_len)).is_ok() && x < area.x + area.width {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.set_char(' ');
+                    cell.set_style(self.selection_style.add_modifier(Modifier::REVERSED));
+                }
             }
             let marker_x = if is_cursor_line && cursor_pos.col >= line_len { x + 1 } else { x };
             if self.is_heading_folded(row) && marker_x + 1 < content_end_x {
@@ -252,6 +267,16 @@ impl Editor {
 
     #[inline]
     fn apply_selection_style(&self, base_style: Style, row: usize, col: usize, selection: Option<(Position, Position)>, block_selection: Option<(Position, Position)>) -> Style {
+        let position = Position::new(row, col);
+        if self.helix_render_heads.binary_search(&position).is_ok() {
+            return self.selection_style.add_modifier(Modifier::REVERSED);
+        }
+        let index = self.helix_render_ranges.partition_point(|(_, end)| *end <= position);
+        if let Some((start, end)) = self.helix_render_ranges.get(index) {
+            if *start <= position && position < *end {
+                return self.selection_style;
+            }
+        }
         if let Some((anchor, current)) = block_selection {
             let (start_row, end_row) = if anchor.row <= current.row { (anchor.row, current.row) } else { (current.row, anchor.row) };
             let (start_col, end_col) = if anchor.col <= current.col { (anchor.col, current.col) } else { (current.col, anchor.col) };

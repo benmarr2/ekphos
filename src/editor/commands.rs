@@ -501,6 +501,14 @@ impl Editor {
                 self.apply_inverse_operation(op);
             }
             self.cursor.move_to(entry.cursor_before.row, entry.cursor_before.col);
+            if self.helix_active() {
+                let set = entry.helix_before.clone().unwrap_or_else(|| HelixSelectionSet { selections: vec![HelixSelection::caret(self.helix_offset(entry.cursor_before))], primary: 0 });
+                self.helix_set_selections(set.selections, set.primary);
+                self.highlight_index.clear();
+                self.row_style_cache.borrow_mut().invalidate_all();
+                self.recalc_code_blocks_from(0);
+                self.update_line_number_width();
+            }
             self.reveal_row(entry.cursor_before.row);
             self.cursor.cancel_selection();
             self.ensure_cursor_visible();
@@ -519,6 +527,14 @@ impl Editor {
                 self.apply_operation(op);
             }
             self.cursor.move_to(entry.cursor_after.row, entry.cursor_after.col);
+            if self.helix_active() {
+                let set = entry.helix_after.clone().unwrap_or_else(|| HelixSelectionSet { selections: vec![HelixSelection::caret(self.helix_offset(entry.cursor_after))], primary: 0 });
+                self.helix_set_selections(set.selections, set.primary);
+                self.highlight_index.clear();
+                self.row_style_cache.borrow_mut().invalidate_all();
+                self.recalc_code_blocks_from(0);
+                self.update_line_number_width();
+            }
             self.reveal_row(entry.cursor_after.row);
             self.cursor.cancel_selection();
             self.ensure_cursor_visible();
@@ -590,7 +606,7 @@ impl Editor {
             }
         }
     }
-    fn apply_insert(&mut self, pos: Position, text: &str) {
+    pub(super) fn apply_insert(&mut self, pos: Position, text: &str) {
         let inserted_rows = text.bytes().filter(|byte| *byte == b'\n').count();
         if text.contains('\n') {
             let mut parts = text.split('\n');

@@ -1,6 +1,7 @@
 mod buffer;
 mod clipboard;
 mod cursor;
+mod helix;
 mod history;
 mod input;
 mod wrap;
@@ -12,6 +13,7 @@ pub use input::{process_key, InputAction};
 pub use buffer::EditorSnapshot;
 use buffer::TextBuffer;
 use cursor::Cursor;
+pub use helix::{HelixChange, HelixRangeMode, HelixSelection, HelixSelectionSet, HelixWordMotion};
 pub use highlighting::MarkdownColors;
 pub use history::HistoryStats;
 use history::{EditOperation, History};
@@ -396,6 +398,10 @@ pub struct Editor {
     visual_line_selection: Option<(usize, usize)>,
     visual_block_selection: Option<(Position, Position)>,
     inclusive_selection: bool,
+    helix_selections: Option<HelixSelectionSet>,
+    helix_render_ranges: Vec<(Position, Position)>,
+    helix_render_heads: Vec<Position>,
+    helix_transaction: Option<(Vec<EditOperation>, Position, Option<HelixSelectionSet>)>,
     heading_colors: [Color; 6],
     code_color: Color,
     link_color: Color,

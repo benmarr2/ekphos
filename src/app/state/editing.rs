@@ -49,6 +49,9 @@ impl App {
             self.editor.vim.mode = VimMode::Normal;
             self.editor.vim.reset_pending();
             self.editor.vim.command_buffer.clear();
+            self.editor.helix.reset_transient();
+            self.editor.helix.jump_list.clear();
+            self.editor.helix.jump_index = 0;
             self.editor.set_wiki_link_styles(ratatui::style::Style::default().fg(self.state.theme.info), ratatui::style::Style::default().fg(self.state.theme.error));
             self.editor.set_markdown_colors(crate::editor::MarkdownColors {
                 headings: [self.state.theme.editor.heading1, self.state.theme.editor.heading2, self.state.theme.editor.heading3, self.state.theme.editor.heading4, self.state.theme.editor.heading5, self.state.theme.editor.heading6],
@@ -61,6 +64,9 @@ impl App {
             });
             self.editor.set_frontmatter_color(self.state.theme.content.frontmatter);
             self.editor.set_cursor(target_row, 0);
+            if self.state.config.editor.mode == EditingMode::Helix {
+                self.editor.helix_begin();
+            }
             self.editor.set_cursor_shape(if self.state.config.editor.mode == EditingMode::Standard { CursorShape::Bar } else { CursorShape::Block });
             for source_line in 0..self.editor.line_count() {
                 let Some(line) = self.editor.line(source_line) else {
@@ -125,7 +131,26 @@ impl App {
                 self.editor.set_block(Block::default());
             } else {
                 let toggle_key = self.state.keymap.binding_label(AppCommand::ToggleEditorMode);
-                let block = self.editor_panel_block(self.state.theme.success, format!(" STANDARD | Ctrl+S Save · Esc Preview · Ctrl+F Find · {toggle_key} Vim · F1 Help "));
+                let block = self.editor_panel_block(self.state.theme.success, format!(" STANDARD | Ctrl+S Save · Esc Preview · Ctrl+F Find · {toggle_key} Modes · F1 Help "));
+                self.editor.set_block(block);
+            }
+            self.editor.set_selection_style(Style::default().fg(self.state.theme.foreground).bg(self.state.theme.selection));
+            self.editor.set_cursor_line_style(Style::default());
+            return;
+        }
+        if self.state.config.editor.mode == EditingMode::Helix {
+            let label = self.editor.helix.mode.label();
+            let color = match self.editor.helix.mode {
+                crate::helix::HelixMode::Insert => self.state.theme.success,
+                crate::helix::HelixMode::Select => self.state.theme.secondary,
+                crate::helix::HelixMode::Normal => self.state.theme.primary,
+                _ => self.state.theme.info,
+            };
+            self.editor.block_accent = color;
+            if self.state.zen_mode {
+                self.editor.set_block(Block::default());
+            } else {
+                let block = self.editor_panel_block(color, format!(" HELIX {label} | :w Save · :q Preview · F1 Help "));
                 self.editor.set_block(block);
             }
             self.editor.set_selection_style(Style::default().fg(self.state.theme.foreground).bg(self.state.theme.selection));
@@ -199,6 +224,15 @@ impl App {
     }
 
     pub fn save_edit(&mut self) -> bool {
+        let (cursor_row, _) = self.editor.cursor();
+        let editor_scroll = self.editor.scroll_offset();
+        let cursor_offset_from_top = cursor_row.saturating_sub(editor_scroll);
+        let content = self.editor.text();
+        if !self.persist_active_body(content) {
+            return false;
+        }
+        self.editor.helix_end();
+        self.editor.helix.reset_transient();
         self.end_buffer_search();
         self.editor.vim.reset_pending();
         self.editor.vim.command_buffer.clear();
@@ -207,13 +241,6 @@ impl App {
         self.editor.highlight_requested_rows = None;
         if let Some(ref worker) = self.workers.highlight {
             worker.cancel();
-        }
-        let (cursor_row, _) = self.editor.cursor();
-        let editor_scroll = self.editor.scroll_offset();
-        let cursor_offset_from_top = cursor_row.saturating_sub(editor_scroll);
-        let content = self.editor.text();
-        if !self.persist_active_body(content) {
-            return false;
         }
         self.sort_tree();
         self.rebuild_sidebar_items();
@@ -230,6 +257,8 @@ impl App {
     }
 
     pub fn cancel_edit(&mut self) {
+        self.editor.helix_end();
+        self.editor.helix.reset_transient();
         self.end_buffer_search();
         self.editor.vim.reset_pending();
         self.editor.vim.command_buffer.clear();

@@ -13,6 +13,10 @@ pub(super) fn handle_edit_mode(app: &mut App, key: crossterm::event::KeyEvent) {
         app.state.dialog = DialogState::Help;
         return;
     }
+    if app.state.config.editor.mode == EditingMode::Helix && !matches!(app.editor.context_menu_state, ContextMenuState::Open { .. }) {
+        handle_helix_mode(app, key);
+        return;
+    }
     if handle_wiki_autocomplete(app, key) {
         app.request_highlight_update();
         return;

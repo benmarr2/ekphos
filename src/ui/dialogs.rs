@@ -14,6 +14,26 @@ const TITLE_MAIN: &[&str] = &["████████ ██   ██ ██�
 const CHANGELOG: &str = include_str!("../../CHANGELOG.md");
 const ANNOUNCEMENT_HORIZONTAL_PADDING: usize = 2;
 
+pub fn render_editor_mode_selector(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+    let width = area.width.min(36);
+    let height = area.height.min(9);
+    let rect = Rect::new(area.x + (area.width - width) / 2, area.y + (area.height - height) / 2, width, height);
+    frame.render_widget(Clear, rect);
+    let block = Block::default().title(" Editing mode ").borders(Borders::ALL).border_style(Style::default().fg(app.state.theme.primary));
+    let modes = [EditingMode::Standard, EditingMode::Vim, EditingMode::Helix];
+    let mut lines = vec![Line::from("")];
+    for mode in modes {
+        let selected = mode == app.state.editor_mode_selected;
+        let marker = if selected { " › " } else { "   " };
+        let style = if selected { Style::default().fg(app.state.theme.primary).add_modifier(Modifier::BOLD) } else { Style::default().fg(app.state.theme.foreground) };
+        lines.push(Line::from(Span::styled(format!("{marker}{}", mode.display_name()), style)));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(" Enter select · Esc cancel", Style::default().fg(app.state.theme.muted))));
+    frame.render_widget(Paragraph::new(lines).block(block), rect);
+}
+
 struct HelpEntry {
     commands: &'static [AppCommand],
     description: &'static str,
@@ -95,7 +115,7 @@ const HELP_SECTIONS: &[HelpSection] = &[
     },
     HelpSection {
         title: "Editor",
-        entries: &[HelpEntry { commands: &[AppCommand::ToggleEditorMode], description: "Switch editing mode" }, HelpEntry { commands: &[AppCommand::InsertTask], description: "Insert task item" }, HelpEntry { commands: &[AppCommand::ToggleEditorFold], description: "Toggle heading fold" }],
+        entries: &[HelpEntry { commands: &[AppCommand::ToggleEditorMode], description: "Choose editing mode" }, HelpEntry { commands: &[AppCommand::InsertTask], description: "Insert task item" }, HelpEntry { commands: &[AppCommand::ToggleEditorFold], description: "Toggle heading fold" }],
     },
 ];
 
@@ -663,12 +683,41 @@ pub fn render_help_dialog(f: &mut Frame, app: &App) -> usize {
             Line::from(vec![Span::styled(" Ctrl+s/o  ", key_style), Span::styled("Save and keep editing", desc_style)]),
             Line::from(vec![Span::styled(" Esc       ", key_style), Span::styled("Return to preview", desc_style)]),
             Line::from(vec![Span::styled(" F1        ", key_style), Span::styled("Show this help", desc_style)]),
-            Line::from(vec![Span::styled(keys(AppCommand::ToggleEditorMode), key_style), Span::styled("Switch to Vim", desc_style)]),
+            Line::from(vec![Span::styled(keys(AppCommand::ToggleEditorMode), key_style), Span::styled("Choose editing mode", desc_style)]),
             Line::from(""),
             Line::from(Span::styled("  Nano aliases", subheader_style)),
             Line::from(vec![Span::styled(" Ctrl+k    ", key_style), Span::styled("Cut selection or line", desc_style)]),
             Line::from(vec![Span::styled(" Ctrl+u    ", key_style), Span::styled("Paste", desc_style)]),
             Line::from(""),
+        ]
+    } else if app.state.config.editor.mode == EditingMode::Helix {
+        vec![
+            Line::from(""),
+            Line::from(Span::styled(" Helix editing", header_style)),
+            Line::from(""),
+            Line::from(Span::styled("  Move and select", subheader_style)),
+            Line::from(vec![Span::styled(" h/j/k/l   ", key_style), Span::styled("Move selection", desc_style)]),
+            Line::from(vec![Span::styled(" w/b/e     ", key_style), Span::styled("Move by word", desc_style)]),
+            Line::from(vec![Span::styled(" v         ", key_style), Span::styled("Extend selections", desc_style)]),
+            Line::from(vec![Span::styled(" x/X/%     ", key_style), Span::styled("Select line / file", desc_style)]),
+            Line::from(vec![Span::styled(" C         ", key_style), Span::styled("Add cursor below", desc_style)]),
+            Line::from(vec![Span::styled(" s/S/K     ", key_style), Span::styled("Regex select / split / filter", desc_style)]),
+            Line::from(vec![Span::styled(" mi/ma     ", key_style), Span::styled("Select inside / around object", desc_style)]),
+            Line::from(""),
+            Line::from(Span::styled("  Edit", subheader_style)),
+            Line::from(vec![Span::styled(" i/a       ", key_style), Span::styled("Insert before / after", desc_style)]),
+            Line::from(vec![Span::styled(" d/c/y     ", key_style), Span::styled("Delete / change / yank", desc_style)]),
+            Line::from(vec![Span::styled(" p/P       ", key_style), Span::styled("Paste after / before", desc_style)]),
+            Line::from(vec![Span::styled(" u/U       ", key_style), Span::styled("Undo / redo", desc_style)]),
+            Line::from(""),
+            Line::from(Span::styled("  Search and save", subheader_style)),
+            Line::from(vec![Span::styled(" / ? n N   ", key_style), Span::styled("Regex search and navigate", desc_style)]),
+            Line::from(vec![Span::styled(" Space f   ", key_style), Span::styled("Find a note (save first)", desc_style)]),
+            Line::from(vec![Span::styled(" Space /   ", key_style), Span::styled("Find content (save first)", desc_style)]),
+            Line::from(vec![Span::styled(" :w        ", key_style), Span::styled("Save and keep editing", desc_style)]),
+            Line::from(vec![Span::styled(" :wq / :q  ", key_style), Span::styled("Save / return to preview", desc_style)]),
+            Line::from(vec![Span::styled(" :q!       ", key_style), Span::styled("Discard edits and preview", desc_style)]),
+            Line::from(vec![Span::styled(keys(AppCommand::ToggleEditorMode), key_style), Span::styled("Choose editing mode", desc_style)]),
         ]
     } else {
         vec![

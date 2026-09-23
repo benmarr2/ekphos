@@ -194,9 +194,10 @@ impl AppBuilder {
         let (editor_color, editor_title) = match config.editor.mode {
             EditingMode::Standard => {
                 let toggle_key = keymap.binding_label(AppCommand::ToggleEditorMode);
-                (theme.success, format!(" STANDARD | Ctrl+S Save · Esc Preview · Ctrl+F Find · {toggle_key} Vim · F1 Help "))
+                (theme.success, format!(" STANDARD | Ctrl+S Save · Esc Preview · Ctrl+F Find · {toggle_key} Modes · F1 Help "))
             }
             EditingMode::Vim => (theme.primary, " NORMAL | Ctrl+S: Save, Esc: Exit ".to_string()),
+            EditingMode::Helix => (theme.primary, " HELIX NORMAL | :w Save · :q Preview · F1 Help ".to_string()),
         };
         editor.set_block(PanelFrame { style: config.style, theme: &theme, title: editor_title, focused: true, accent: editor_color, surface: panel_surface(&config, &theme, SurfaceKind::Content) }.block());
         editor.set_cursor_shape(if config.editor.mode == EditingMode::Standard { CursorShape::Bar } else { CursorShape::Block });
@@ -275,6 +276,7 @@ impl AppBuilder {
                 changelog_scroll: 0,
                 changelog_links: Vec::new(),
                 theme_picker: None,
+                editor_mode_selected: EditingMode::Standard,
             },
             dependencies,
         };

@@ -46,8 +46,8 @@ fn main_layout_constraints(zen_mode: bool, sidebar_collapsed: bool, outline_coll
 pub(crate) use content::content_item_click_col;
 pub use content::render_content;
 pub use dialogs::{
-    render_changelog_dialog, render_create_document_dialog, render_create_folder_dialog, render_create_note_in_folder_dialog, render_create_wiki_note_dialog, render_delete_confirm_dialog, render_delete_folder_confirm_dialog, render_directory_not_found_dialog, render_empty_directory_dialog,
-    render_help_dialog, render_keybinding_warning, render_onboarding_dialog, render_rename_folder_dialog, render_rename_note_dialog, render_unsaved_changes_dialog, render_welcome_dialog,
+    render_changelog_dialog, render_create_document_dialog, render_create_folder_dialog, render_create_note_in_folder_dialog, render_create_wiki_note_dialog, render_delete_confirm_dialog, render_delete_folder_confirm_dialog, render_directory_not_found_dialog, render_editor_mode_selector,
+    render_empty_directory_dialog, render_help_dialog, render_keybinding_warning, render_onboarding_dialog, render_rename_folder_dialog, render_rename_note_dialog, render_unsaved_changes_dialog, render_welcome_dialog,
 };
 pub use outline::{render_outline, OutlineView};
 pub use sidebar::{render_sidebar, SidebarView};
@@ -129,6 +129,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
                 }
             }
         }
+        DialogState::EditorModeSelector => render_editor_mode_selector(f, app),
         DialogState::None => {
             if app.state.show_welcome {
                 render_welcome_dialog(f, &app.state.theme);

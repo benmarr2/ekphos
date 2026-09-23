@@ -96,6 +96,7 @@ pub enum DialogState {
     GraphView,
     TaskView,
     ThemeSelector,
+    EditorModeSelector,
 }
 
 /// State for the theme selector modal (opened with Ctrl+T). Live-previews the
