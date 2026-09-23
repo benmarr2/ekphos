@@ -480,6 +480,21 @@ pub(super) fn paste_into_editor(app: &mut App, fallback: Option<String>) {
         app.editor.vim.mode = VimMode::Insert;
         update_cursor_style(app);
     }
+    match app.clipboard_image_link() {
+        Some(Ok(link)) => insert_pasted_text(app, link),
+        Some(Err(error)) => app.show_error_toast(error),
+        None => paste_clipboard_text(app, fallback),
+    }
+    app.update_editor_highlights();
+    app.update_editor_block();
+    if let Some(view_height) = app.editor.editor_view_height.checked_sub(2) {
+        if view_height > 0 {
+            app.update_editor_scroll(view_height);
+        }
+    }
+}
+
+fn paste_clipboard_text(app: &mut App, fallback: Option<String>) {
     let paste_text = match clipboard::get_content_as_markdown_from(app.clipboard()) {
         Ok(ClipboardContent::Markdown(md)) => Some(md),
         Ok(ClipboardContent::PlainText(txt)) => Some(txt),
@@ -490,14 +505,7 @@ pub(super) fn paste_into_editor(app: &mut App, fallback: Option<String>) {
         }
     };
     if let Some(paste_text) = paste_text.filter(|text| !text.is_empty()) {
-        if paste_text.contains('\n') {
-            app.state.needs_full_clear = true;
-        }
-        if app.state.config.editor.mode == EditingMode::Helix {
-            helix_insert_pasted_text(app, paste_text);
-        } else {
-            app.editor.insert_str(&paste_text);
-        }
+        insert_pasted_text(app, paste_text);
     } else if app.state.config.editor.mode == EditingMode::Helix {
         if let Ok(Some(text)) = app.clipboard().get_text() {
             helix_insert_pasted_text(app, text);
@@ -505,12 +513,16 @@ pub(super) fn paste_into_editor(app: &mut App, fallback: Option<String>) {
     } else {
         app.editor.paste();
     }
-    app.update_editor_highlights();
-    app.update_editor_block();
-    if let Some(view_height) = app.editor.editor_view_height.checked_sub(2) {
-        if view_height > 0 {
-            app.update_editor_scroll(view_height);
-        }
+}
+
+fn insert_pasted_text(app: &mut App, text: String) {
+    if text.contains('\n') {
+        app.state.needs_full_clear = true;
+    }
+    if app.state.config.editor.mode == EditingMode::Helix {
+        helix_insert_pasted_text(app, text);
+    } else {
+        app.editor.insert_str(&text);
     }
 }
 

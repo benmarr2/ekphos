@@ -4,6 +4,7 @@ use super::*;
 pub trait Clock: Send + Sync {
     fn now(&self) -> std::time::Instant;
     fn today(&self) -> chrono::NaiveDate;
+    fn local_now(&self) -> chrono::NaiveDateTime;
 }
 
 #[derive(Debug, Default)]
@@ -15,6 +16,9 @@ impl Clock for SystemClock {
     }
     fn today(&self) -> chrono::NaiveDate {
         chrono::Local::now().date_naive()
+    }
+    fn local_now(&self) -> chrono::NaiveDateTime {
+        chrono::Local::now().naive_local()
     }
 }
 

@@ -1094,6 +1094,10 @@ mod tests {
         fn today(&self) -> NaiveDate {
             NaiveDate::from_ymd_opt(2026, 9, 10).unwrap()
         }
+
+        fn local_now(&self) -> chrono::NaiveDateTime {
+            self.today().and_hms_opt(9, 30, 0).unwrap()
+        }
     }
 
     struct Fixture {

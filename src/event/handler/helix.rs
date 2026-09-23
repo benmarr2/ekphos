@@ -69,6 +69,14 @@ fn push_jump(app: &mut App) {
 
 fn register_values(app: &mut App, register: char) -> Vec<String> {
     if register == '+' || register == '*' {
+        match app.clipboard_image_link() {
+            Some(Ok(link)) => return vec![link],
+            Some(Err(error)) => {
+                status(app, error);
+                return Vec::new();
+            }
+            None => {}
+        }
         match app.clipboard().get_text() {
             Ok(Some(text)) => vec![text],
             Ok(None) => Vec::new(),
@@ -174,6 +182,7 @@ fn handle_helix_insert(app: &mut App, key: crossterm::event::KeyEvent) {
             app.editor.helix_begin_transaction();
         }
         KeyCode::Char('r') if control => app.editor.helix.pending = Some('R'),
+        KeyCode::Char('v') if control => paste_into_editor(app, None),
         KeyCode::Char('w') if control => delete_backward(app, BackwardDelete::Word),
         KeyCode::Char('u') if control => delete_backward(app, BackwardDelete::Line),
         KeyCode::Char('h') if control => delete_backward(app, BackwardDelete::Char),
@@ -1523,9 +1532,11 @@ fn apply_regex_selection(app: &mut App, pattern: &str, mode: HelixMode) {
 mod tests {
     use super::*;
     use crate::app::AppDependencies;
+    use crate::clipboard::MemoryClipboard;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
 
     static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
 
@@ -1533,6 +1544,7 @@ mod tests {
         app: App,
         root: PathBuf,
         note: PathBuf,
+        clipboard: Arc<MemoryClipboard>,
     }
 
     impl HelixApp {
@@ -1548,13 +1560,15 @@ mod tests {
             let note = vault.join("fixture.md");
             fs::write(&note, text).unwrap();
             let config = Config { general: crate::config::GeneralConfig { welcome_shown: false, check_updates: false, ..Default::default() }, editor: crate::config::EditorConfig { mode: EditingMode::Helix, ..Default::default() }, ..Default::default() };
-            let dependencies = AppDependencies::headless(root.join("config"), root.join("cache"));
+            let clipboard = Arc::new(MemoryClipboard::default());
+            let mut dependencies = AppDependencies::headless(root.join("config"), root.join("cache"));
+            dependencies.clipboard = clipboard.clone();
             let mut app = App::new_injected(config, vault, None, dependencies);
             app.state.show_welcome = false;
             app.state.dialog = DialogState::None;
             app.enter_edit_mode();
             app.editor.helix_set_selections(vec![HelixSelection::caret(0)], 0);
-            Self { app, root, note }
+            Self { app, root, note, clipboard }
         }
 
         fn keys(&mut self, text: &str) {
@@ -1808,6 +1822,34 @@ mod tests {
         fixture.keys("&");
         assert_eq!(fixture.text(), "a    = 1\nlong = 2");
         assert_eq!(fixture.selected(), vec!["=", "="]);
+    }
+
+    #[test]
+    fn space_p_pastes_a_clipboard_image_after_the_selection() {
+        let mut fixture = HelixApp::new();
+        fixture.clipboard.set_image_png(b"png bytes".to_vec());
+        fixture.select(vec![HelixSelection::spanning(0, 5, false)], 0);
+        fixture.keys(" p");
+        let attachments: Vec<PathBuf> = fs::read_dir(fixture.root.join("vault/attachments")).unwrap().map(|entry| entry.unwrap().path()).collect();
+        assert_eq!(attachments.len(), 1);
+        let name = attachments[0].file_name().unwrap().to_str().unwrap().replace(' ', "%20");
+        assert_eq!(fixture.text(), format!("hello![](attachments/{name}) world"));
+    }
+
+    #[test]
+    fn insert_mode_ctrl_v_and_ctrl_r_plus_paste_clipboard_images() {
+        let mut fixture = HelixApp::new();
+        fixture.clipboard.set_image_png(b"png bytes".to_vec());
+        fixture.select(vec![HelixSelection::caret(5)], 0);
+        fixture.keys("i");
+        fixture.press(KeyCode::Char('v'), KeyModifiers::CONTROL);
+        fixture.press(KeyCode::Char('r'), KeyModifiers::CONTROL);
+        fixture.keys("+");
+        let mut attachments: Vec<String> = fs::read_dir(fixture.root.join("vault/attachments")).unwrap().map(|entry| entry.unwrap().file_name().to_str().unwrap().replace(' ', "%20")).collect();
+        attachments.sort_by(|left, right| left.len().cmp(&right.len()).then_with(|| left.cmp(right)));
+        assert_eq!(attachments.len(), 2);
+        assert_eq!(fixture.text(), format!("hello![](attachments/{})![](attachments/{}) world", attachments[0], attachments[1]));
+        assert_eq!(fixture.app.editor.helix.mode, HelixMode::Insert);
     }
 
     #[test]
