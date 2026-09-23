@@ -763,6 +763,7 @@ pub struct EditorSession {
     inner: Editor,
     pub mode: Mode,
     pub vim: VimState,
+    pub helix: crate::helix::HelixState,
     pub visual_line_anchor: Option<usize>,
     pub visual_line_current: Option<usize>,
     pub visual_block_anchor: Option<Position>,
@@ -792,6 +793,7 @@ impl EditorSession {
             inner,
             mode: Mode::Normal,
             vim: VimState::new(),
+            helix: crate::helix::HelixState::default(),
             visual_line_anchor: None,
             visual_line_current: None,
             visual_block_anchor: None,
@@ -1015,6 +1017,7 @@ pub struct UiState {
     pub changelog_scroll: usize,
     pub changelog_links: Vec<(Rect, String)>,
     pub theme_picker: Option<ThemePicker>,
+    pub editor_mode_selected: EditingMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

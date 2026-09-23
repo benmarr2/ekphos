@@ -102,6 +102,7 @@ pub enum EditingMode {
     #[default]
     Standard,
     Vim,
+    Helix,
 }
 
 impl EditingMode {
@@ -109,6 +110,7 @@ impl EditingMode {
         match self {
             Self::Standard => "Standard",
             Self::Vim => "Vim",
+            Self::Helix => "Helix",
         }
     }
 
@@ -116,6 +118,7 @@ impl EditingMode {
         match self {
             Self::Standard => Self::Vim,
             Self::Vim => Self::Standard,
+            Self::Helix => Self::Standard,
         }
     }
 }
@@ -1153,7 +1156,7 @@ mod tests {
     }
     #[test]
     fn explicit_editing_modes_round_trip() {
-        for mode in [EditingMode::Standard, EditingMode::Vim] {
+        for mode in [EditingMode::Standard, EditingMode::Vim, EditingMode::Helix] {
             let mut config = Config::default();
             config.editor.mode = mode;
             let serialized = toml::to_string_pretty(&config).unwrap();

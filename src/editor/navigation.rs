@@ -26,6 +26,12 @@ impl Editor {
     }
 
     pub fn move_cursor(&mut self, movement: CursorMove) {
+        self.apply_cursor_move(movement);
+        self.reveal_row(self.cursor.pos().row);
+        self.ensure_cursor_visible();
+    }
+
+    pub(super) fn apply_cursor_move(&mut self, movement: CursorMove) {
         let pos = self.cursor.pos();
         let line_count = self.buffer.line_count();
         if !matches!(movement, CursorMove::Up | CursorMove::Down) {
@@ -136,7 +142,6 @@ impl Editor {
             CursorMove::ParagraphBack => {
                 let Some(mut row) = self.previous_visible_row(pos.row) else {
                     self.cursor.move_to(0, 0);
-                    self.ensure_cursor_visible();
                     return;
                 };
                 while self.buffer.line(row).is_some_and(|line| line.trim().is_empty()) {
@@ -209,8 +214,6 @@ impl Editor {
                 self.cursor.move_to(pos.row, col.saturating_sub(1).min(line_len));
             }
         }
-        self.reveal_row(self.cursor.pos().row);
-        self.ensure_cursor_visible();
     }
     pub(super) fn move_word_forward(&mut self) {
         let pos = self.cursor.pos();

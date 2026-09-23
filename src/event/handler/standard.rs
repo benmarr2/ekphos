@@ -105,6 +105,17 @@ fn leave_standard_editor(app: &mut App) {
 }
 
 pub(super) fn switch_editing_mode(app: &mut App) {
+    app.open_editor_mode_selector();
+}
+
+pub(super) fn apply_editing_mode(app: &mut App, mode: EditingMode) {
+    if mode == app.state.config.editor.mode {
+        return;
+    }
+    if app.editor.mode == Mode::Edit {
+        app.editor.helix_end();
+    }
+    app.editor.helix.reset_transient();
     if let Some(state) = app.editor.block_insert_state.take() {
         apply_block_insert(app, state);
     }
@@ -129,7 +140,10 @@ pub(super) fn switch_editing_mode(app: &mut App) {
     app.editor.vim.search_buffer.clear();
     app.editor.vim.status_message = None;
     app.editor.vim.mode = VimMode::Normal;
-    app.toggle_editing_mode_preference();
+    app.set_editing_mode_preference(mode);
+    if mode == EditingMode::Helix && app.editor.mode == Mode::Edit {
+        app.editor.helix_begin();
+    }
     update_cursor_style(app);
     app.update_editor_block();
 }

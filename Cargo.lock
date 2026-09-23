@@ -754,6 +754,7 @@ dependencies = [
  "ratex-parser",
  "ratex-render",
  "ratex-types",
+ "regex",
  "serde",
  "serde_json",
  "serde_yaml",

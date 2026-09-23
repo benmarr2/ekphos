@@ -39,6 +39,19 @@ _Note: Always update to the latest version. If you encounter config issues after
 - Rust 1.90+
 - For inline images and graphical equations: iTerm2, Kitty, WezTerm, Ghostty, or a Sixel-compatible terminal
 
+## Editing modes
+
+Press F6 to choose Standard, Vim, or Helix when editing a Markdown note. The choice is saved for future sessions. You can also set it in your config file:
+
+```toml
+[editor]
+mode = "helix"
+```
+
+Helix mode uses selections as cursors. Use `v` to extend selections, `C` to add a cursor below, `%` to select the note, and `s` to select regex matches within the current selections. Press `i` or `a` to insert, `Esc` to return to Normal mode, and `F1` for key help. In Helix mode, `:w` saves without leaving the editor, `:wq` saves and returns to preview, and `:q` returns to preview after checking for unsaved changes.
+
+Helix shortcuts take priority while editing. For example, Ctrl+S saves a selection to the jump list; use `:w` to save the note. `Space f` opens the note picker and `Space /` opens content search after saving any edits. Features that need language servers, tree-sitter, split windows, or shell integration are not available in Ekphos.
+
 ## Building from source
 
 ```bash

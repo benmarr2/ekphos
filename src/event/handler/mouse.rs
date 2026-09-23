@@ -2,6 +2,9 @@ use super::*;
 
 pub(super) fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEvent) {
     app.state.keymap.reset_pending();
+    if app.state.dialog == DialogState::EditorModeSelector {
+        return;
+    }
     let mouse_x = mouse.column;
     let mouse_y = mouse.row;
     if let ContextMenuState::Open { x, y, selected_index: _ } = app.editor.context_menu_state {
@@ -458,6 +461,14 @@ pub(super) fn handle_paste_event(app: &mut App, text: String) {
     if app.editor.mode != Mode::Edit {
         return;
     }
+    if app.state.config.editor.mode == EditingMode::Helix {
+        app.editor.helix.pending = None;
+        if app.editor.helix.mode.is_prompt() {
+            app.editor.helix.prompt.push_str(text.lines().next().unwrap_or_default());
+            app.update_editor_block();
+            return;
+        }
+    }
     paste_into_editor(app, Some(text));
 }
 
@@ -482,7 +493,15 @@ pub(super) fn paste_into_editor(app: &mut App, fallback: Option<String>) {
         if paste_text.contains('\n') {
             app.state.needs_full_clear = true;
         }
-        app.editor.insert_str(&paste_text);
+        if app.state.config.editor.mode == EditingMode::Helix {
+            helix_insert_pasted_text(app, paste_text);
+        } else {
+            app.editor.insert_str(&paste_text);
+        }
+    } else if app.state.config.editor.mode == EditingMode::Helix {
+        if let Ok(Some(text)) = app.clipboard().get_text() {
+            helix_insert_pasted_text(app, text);
+        }
     } else {
         app.editor.paste();
     }
@@ -514,6 +533,11 @@ pub(super) fn handle_edit_mode_mouse(app: &mut App, mouse: crossterm::event::Mou
                     update_cursor_style(app);
                 }
                 move_editor_cursor_to(app, row, col);
+                if app.state.config.editor.mode == EditingMode::Helix {
+                    helix_reset_input(app);
+                    let offset = app.editor.helix_offset(Position::new(row, col));
+                    app.editor.helix_set_selections(vec![crate::editor::HelixSelection::caret(offset)], 0);
+                }
                 app.editor.mouse_button_held = true;
                 app.editor.mouse_drag_start = Some((row as u16, col as u16));
                 app.editor.last_mouse_y = mouse_y; // Initialize to prevent stale auto-scroll
@@ -530,6 +554,16 @@ pub(super) fn handle_edit_mode_mouse(app: &mut App, mouse: crossterm::event::Mou
         MouseEventKind::Drag(MouseButton::Left) => {
             if app.editor.mouse_button_held {
                 app.editor.last_mouse_y = mouse_y;
+                if app.state.config.editor.mode == EditingMode::Helix {
+                    if let Some((row, col)) = app.screen_to_editor_coords(mouse_x, mouse_y) {
+                        let (anchor_row, anchor_col) = app.editor.mouse_drag_start.unwrap_or((row as u16, col as u16));
+                        let anchor = app.editor.helix_offset(Position::new(anchor_row as usize, anchor_col as usize));
+                        let head = app.editor.helix_offset(Position::new(row, col));
+                        app.editor.helix_set_selections(vec![crate::editor::HelixSelection { anchor, head }], 0);
+                        handle_auto_scroll(app, mouse_y);
+                    }
+                    return;
+                }
                 let can_start_selection = app.state.config.editor.mode == EditingMode::Standard || app.editor.vim.mode == VimMode::Normal;
                 if !app.editor.has_selection() && can_start_selection {
                     if app.state.config.editor.mode == EditingMode::Vim {
@@ -598,14 +632,22 @@ pub(super) fn perform_auto_scroll(app: &mut App, direction: i8) {
         if new_top != app.editor.editor_scroll_top {
             app.editor.editor_scroll_top = new_top;
             app.editor.sync_scroll_offset();
-            app.editor.move_cursor(CursorMove::Up);
+            if app.state.config.editor.mode == EditingMode::Helix {
+                app.editor.helix_move(CursorMove::Up, true);
+            } else {
+                app.editor.move_cursor(CursorMove::Up);
+            }
         }
     } else {
         let new_top = app.editor.visible_row_at_offset(app.editor.editor_scroll_top, 1);
         if new_top != app.editor.editor_scroll_top {
             app.editor.editor_scroll_top = new_top;
             app.editor.sync_scroll_offset();
-            app.editor.move_cursor(CursorMove::Down);
+            if app.state.config.editor.mode == EditingMode::Helix {
+                app.editor.helix_move(CursorMove::Down, true);
+            } else {
+                app.editor.move_cursor(CursorMove::Down);
+            }
         }
     }
 }
@@ -647,6 +689,17 @@ pub(super) fn constrain_cursor_to_viewport(app: &mut App) {
     } else {
         clamped_row
     };
+    if app.state.config.editor.mode == EditingMode::Helix {
+        if final_row != cursor_row {
+            let head = app.editor.helix_offset(Position::new(final_row, cursor_col));
+            let selection = match app.editor.helix_primary() {
+                Some(primary) if app.editor.helix.mode == crate::helix::HelixMode::Select => crate::editor::HelixSelection { anchor: primary.anchor, head },
+                _ => crate::editor::HelixSelection::caret(head),
+            };
+            app.editor.helix_set_selections(vec![selection], 0);
+        }
+        return;
+    }
     app.editor.set_cursor_no_scroll(final_row, cursor_col);
 }
 
@@ -678,6 +731,24 @@ pub(super) fn get_context_menu_hover_index(mouse_x: u16, mouse_y: u16, menu_x: u
 }
 
 pub(super) fn execute_context_menu_action(app: &mut App, action: ContextMenuItem) {
+    if app.state.config.editor.mode == EditingMode::Helix {
+        match action {
+            ContextMenuItem::Copy => {
+                app.editor.helix.selected_register = Some('+');
+                yank(app);
+            }
+            ContextMenuItem::Cut => {
+                app.editor.helix.selected_register = Some('+');
+                yank(app);
+                app.editor.helix_replace(&[String::new()], crate::editor::HelixRangeMode::Selection);
+            }
+            ContextMenuItem::Paste => paste_into_editor(app, None),
+            ContextMenuItem::SelectAll => helix_select_all(app),
+        }
+        app.editor.context_menu_state = ContextMenuState::None;
+        app.update_editor_block();
+        return;
+    }
     match action {
         ContextMenuItem::Copy => {
             app.editor.copy();

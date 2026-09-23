@@ -47,6 +47,19 @@ pub fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
             (mode.to_string(), String::new(), None, status)
         }
         Mode::Edit if app.state.config.editor.mode == EditingMode::Standard => ("standard".to_string(), String::new(), None, None),
+        Mode::Edit if app.state.config.editor.mode == EditingMode::Helix => {
+            let helix = &app.editor.helix;
+            let command = match helix.mode {
+                crate::helix::HelixMode::Command => Some(format!(":{}", helix.prompt)),
+                crate::helix::HelixMode::SearchForward => Some(format!("/{}", helix.prompt)),
+                crate::helix::HelixMode::SearchBackward => Some(format!("?{}", helix.prompt)),
+                crate::helix::HelixMode::RegexSelect => Some(format!("s{}", helix.prompt)),
+                crate::helix::HelixMode::RegexSplit => Some(format!("S{}", helix.prompt)),
+                crate::helix::HelixMode::RegexKeep(_) => Some(format!("K{}", helix.prompt)),
+                _ => helix.status_message.clone(),
+            };
+            (format!("helix {}", helix.mode.label().to_ascii_lowercase()), helix.pending_label(), command.map(|c| (c, false)), None)
+        }
         Mode::Edit => {
             let vim = &app.editor.vim;
             let mode_name = match &vim.mode {
@@ -146,7 +159,13 @@ pub fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
         let status = normal_status.map(|msg| vec![Span::styled(" › ", Style::default().fg(statusbar.separator)), Span::styled(msg, Style::default().fg(theme.warning).add_modifier(Modifier::BOLD))]);
         (path, status)
     };
-    let recording_indicator = if app.editor.mode == Mode::Edit && app.state.config.editor.mode == EditingMode::Vim && app.editor.vim.macros.is_recording() { vec![Span::styled("● REC  ", Style::default().fg(theme.error).add_modifier(Modifier::BOLD))] } else { vec![] };
+    let recording = app.editor.mode == Mode::Edit
+        && match app.state.config.editor.mode {
+            EditingMode::Vim => app.editor.vim.macros.is_recording(),
+            EditingMode::Helix => app.editor.helix.recording.is_some(),
+            EditingMode::Standard => false,
+        };
+    let recording_indicator = if recording { vec![Span::styled("● REC  ", Style::default().fg(theme.error).add_modifier(Modifier::BOLD))] } else { vec![] };
     let indexing_indicator = if app.search.indexing_in_progress {
         use std::sync::atomic::Ordering;
         let current = app.search.index_progress.load(Ordering::Relaxed);

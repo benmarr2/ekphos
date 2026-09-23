@@ -115,6 +115,11 @@ pub(super) fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent) -
             handle_theme_selector_dialog(app, key);
             return Ok(false);
         }
+        DialogState::EditorModeSelector => {
+            app.state.keymap.reset_pending();
+            handle_editor_mode_selector(app, key);
+            return Ok(false);
+        }
         DialogState::None => {}
     }
     if app.state.show_welcome {
@@ -153,6 +158,30 @@ pub(super) fn handle_key_event(app: &mut App, key: crossterm::event::KeyEvent) -
         }
     }
     Ok(false)
+}
+
+pub(super) fn handle_editor_mode_selector(app: &mut App, key: crossterm::event::KeyEvent) {
+    const MODES: [EditingMode; 3] = [EditingMode::Standard, EditingMode::Vim, EditingMode::Helix];
+    match key.code {
+        KeyCode::Esc => app.state.dialog = DialogState::None,
+        KeyCode::Enter => {
+            let mode = app.state.editor_mode_selected;
+            app.state.dialog = DialogState::None;
+            apply_editing_mode(app, mode);
+        }
+        KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
+            let index = MODES.iter().position(|mode| *mode == app.state.editor_mode_selected).unwrap_or(0);
+            app.state.editor_mode_selected = MODES[(index + MODES.len() - 1) % MODES.len()];
+        }
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+            let index = MODES.iter().position(|mode| *mode == app.state.editor_mode_selected).unwrap_or(0);
+            app.state.editor_mode_selected = MODES[(index + 1) % MODES.len()];
+        }
+        KeyCode::Char('s') => app.state.editor_mode_selected = EditingMode::Standard,
+        KeyCode::Char('v') => app.state.editor_mode_selected = EditingMode::Vim,
+        KeyCode::Char('h') => app.state.editor_mode_selected = EditingMode::Helix,
+        _ => {}
+    }
 }
 
 pub(super) fn handle_keybinding_warning(app: &mut App, key: crossterm::event::KeyEvent) {

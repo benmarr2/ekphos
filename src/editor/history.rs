@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::time::Instant;
 
 use super::cursor::Position;
+use super::helix::HelixSelectionSet;
 
 #[derive(Debug, Clone)]
 pub enum EditOperation {
@@ -95,11 +96,13 @@ pub struct HistoryEntry {
     pub cursor_before: Position,
     pub cursor_after: Position,
     pub timestamp: Instant,
+    pub helix_before: Option<HelixSelectionSet>,
+    pub helix_after: Option<HelixSelectionSet>,
 }
 
 impl HistoryEntry {
     pub fn new(op: EditOperation, cursor_before: Position, cursor_after: Position) -> Self {
-        Self { operations: vec![op], cursor_before, cursor_after, timestamp: Instant::now() }
+        Self { operations: vec![op], cursor_before, cursor_after, timestamp: Instant::now(), helix_before: None, helix_after: None }
     }
 
     /// Check if this entry can merge with another single-char insertion
@@ -125,7 +128,10 @@ impl HistoryEntry {
         self.timestamp = Instant::now();
     }
     fn payload_bytes(&self) -> usize {
-        self.operations.capacity() * std::mem::size_of::<EditOperation>() + self.operations.iter().map(EditOperation::retained_bytes).sum::<usize>()
+        self.operations.capacity() * std::mem::size_of::<EditOperation>()
+            + self.operations.iter().map(EditOperation::retained_bytes).sum::<usize>()
+            + self.helix_before.as_ref().map_or(0, |set| set.selections.capacity() * std::mem::size_of::<super::helix::HelixSelection>())
+            + self.helix_after.as_ref().map_or(0, |set| set.selections.capacity() * std::mem::size_of::<super::helix::HelixSelection>())
     }
 }
 
@@ -206,7 +212,18 @@ impl History {
         }
         self.redo_stack.clear();
         self.redo_payload_bytes = 0;
-        let entry = HistoryEntry { operations, cursor_before, cursor_after, timestamp: Instant::now() };
+        let entry = HistoryEntry { operations, cursor_before, cursor_after, timestamp: Instant::now(), helix_before: None, helix_after: None };
+        self.undo_payload_bytes += entry.payload_bytes();
+        self.undo_stack.push_back(entry);
+        self.enforce_limits();
+    }
+    pub(super) fn record_helix_group(&mut self, operations: Vec<EditOperation>, cursor_before: Position, cursor_after: Position, helix_before: Option<HelixSelectionSet>, helix_after: Option<HelixSelectionSet>) {
+        if operations.is_empty() {
+            return;
+        }
+        self.redo_stack.clear();
+        self.redo_payload_bytes = 0;
+        let entry = HistoryEntry { operations, cursor_before, cursor_after, timestamp: Instant::now(), helix_before, helix_after };
         self.undo_payload_bytes += entry.payload_bytes();
         self.undo_stack.push_back(entry);
         self.enforce_limits();
@@ -250,7 +267,7 @@ impl History {
     }
 
     pub fn retained_bytes(&self) -> usize {
-        let entry_bytes = |entry: &HistoryEntry| entry.operations.capacity() * std::mem::size_of::<EditOperation>() + entry.operations.iter().map(EditOperation::retained_bytes).sum::<usize>();
+        let entry_bytes = HistoryEntry::payload_bytes;
         self.undo_stack.capacity() * std::mem::size_of::<HistoryEntry>() + self.redo_stack.capacity() * std::mem::size_of::<HistoryEntry>() + self.undo_stack.iter().map(entry_bytes).sum::<usize>() + self.redo_stack.iter().map(entry_bytes).sum::<usize>()
     }
 }

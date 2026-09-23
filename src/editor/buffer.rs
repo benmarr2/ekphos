@@ -54,11 +54,12 @@ pub struct TextBuffer {
     before: Vec<Arc<String>>,
     after: Vec<Arc<String>>,
     cached_snapshot: RefCell<Option<EditorSnapshot>>,
+    cached_line_starts: RefCell<Option<Arc<[usize]>>>,
 }
 
 impl Default for TextBuffer {
     fn default() -> Self {
-        Self { before: vec![Arc::new(String::new())], after: Vec::new(), cached_snapshot: RefCell::new(None) }
+        Self { before: vec![Arc::new(String::new())], after: Vec::new(), cached_snapshot: RefCell::new(None), cached_line_starts: RefCell::new(None) }
     }
 }
 
@@ -67,7 +68,7 @@ impl TextBuffer {
         if lines.is_empty() {
             return Self::default();
         }
-        Self { before: lines.into_iter().map(Arc::new).collect(), after: Vec::new(), cached_snapshot: RefCell::new(None) }
+        Self { before: lines.into_iter().map(Arc::new).collect(), after: Vec::new(), cached_snapshot: RefCell::new(None), cached_line_starts: RefCell::new(None) }
     }
 
     #[inline]
@@ -140,8 +141,27 @@ impl TextBuffer {
         snapshot
     }
 
+    pub fn line_starts(&self) -> Arc<[usize]> {
+        if let Some(starts) = self.cached_line_starts.borrow().as_ref() {
+            return Arc::clone(starts);
+        }
+        let mut starts = Vec::with_capacity(self.line_count() + 1);
+        let mut offset = 0;
+        starts.push(offset);
+        for line in self.iter_lines() {
+            offset += line.chars().count() + 1;
+            starts.push(offset);
+        }
+        let starts: Arc<[usize]> = starts.into();
+        *self.cached_line_starts.borrow_mut() = Some(Arc::clone(&starts));
+        starts
+    }
+
     pub fn retained_bytes(&self) -> usize {
-        (self.before.capacity() + self.after.capacity()) * std::mem::size_of::<Arc<String>>() + self.before.iter().chain(self.after.iter()).map(|line| line.capacity()).sum::<usize>() + self.cached_snapshot.borrow().as_ref().map_or(0, EditorSnapshot::reference_bytes)
+        (self.before.capacity() + self.after.capacity()) * std::mem::size_of::<Arc<String>>()
+            + self.before.iter().chain(self.after.iter()).map(|line| line.capacity()).sum::<usize>()
+            + self.cached_snapshot.borrow().as_ref().map_or(0, EditorSnapshot::reference_bytes)
+            + self.cached_line_starts.borrow().as_ref().map_or(0, |starts| starts.len() * std::mem::size_of::<usize>())
     }
 
     pub fn insert_char(&mut self, row: usize, col: usize, c: char) {
@@ -288,6 +308,7 @@ impl TextBuffer {
     }
     fn invalidate_snapshot(&mut self) {
         self.cached_snapshot.get_mut().take();
+        self.cached_line_starts.get_mut().take();
     }
 }
 

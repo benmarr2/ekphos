@@ -8,6 +8,7 @@ pub mod editor;
 pub mod event;
 mod frontmatter_templates;
 pub mod graph;
+pub mod helix;
 pub mod highlight;
 pub mod highlight_worker;
 pub(crate) mod image_service;

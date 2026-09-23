@@ -127,8 +127,21 @@ fn render_zen_status_line(f: &mut Frame, view: &EditorView<'_>, area: Rect) {
         let status_line = Line::from(vec![
             Span::styled(" STANDARD ", Style::default().fg(theme.background).bg(theme.success).add_modifier(Modifier::BOLD)),
             Span::styled(" │ ", Style::default().fg(theme.border)),
-            Span::styled(format!("Ctrl+S Save · Esc Preview · Ctrl+F Find · {toggle_key} Vim · F1 Help"), Style::default().fg(theme.muted)),
+            Span::styled(format!("Ctrl+S Save · Esc Preview · Ctrl+F Find · {toggle_key} Modes · F1 Help"), Style::default().fg(theme.muted)),
         ]);
+        f.render_widget(Paragraph::new(status_line), area);
+        return;
+    }
+    if view.editing_mode == EditingMode::Helix {
+        let label = view.editor.helix.mode.label();
+        let color = match view.editor.helix.mode {
+            crate::helix::HelixMode::Insert => theme.success,
+            crate::helix::HelixMode::Select => theme.secondary,
+            crate::helix::HelixMode::Normal => theme.primary,
+            _ => theme.info,
+        };
+        let status_line =
+            Line::from(vec![Span::styled(format!(" HELIX {label} "), Style::default().fg(theme.background).bg(color).add_modifier(Modifier::BOLD)), Span::styled(" │ ", Style::default().fg(theme.border)), Span::styled(":w Save · :q Preview · F1 Help", Style::default().fg(theme.muted))]);
         f.render_widget(Paragraph::new(status_line), area);
         return;
     }

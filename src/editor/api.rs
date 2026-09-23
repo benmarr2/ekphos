@@ -38,6 +38,10 @@ impl Editor {
             visual_line_selection: None,
             visual_block_selection: None,
             inclusive_selection: false,
+            helix_selections: None,
+            helix_render_ranges: Vec::new(),
+            helix_render_heads: Vec::new(),
+            helix_transaction: None,
             heading_colors: [Color::Blue, Color::Green, Color::Yellow, Color::Magenta, Color::Cyan, Color::Gray],
             code_color: Color::Green,
             link_color: Color::Cyan,
@@ -64,6 +68,9 @@ impl Editor {
             + self.code_block_rows.capacity() * std::mem::size_of::<usize>()
             + self.folded_headings.len() * std::mem::size_of::<usize>()
             + self.fold_projection.borrow().as_ref().map_or(0, |projection| projection.heading_levels.capacity() * std::mem::size_of::<Option<usize>>() + projection.hidden_ranges.capacity() * std::mem::size_of::<(usize, usize)>())
+            + self.helix_selections.as_ref().map_or(0, |set| set.selections.capacity() * std::mem::size_of::<HelixSelection>())
+            + self.helix_render_ranges.capacity() * std::mem::size_of::<(Position, Position)>()
+            + self.helix_render_heads.capacity() * std::mem::size_of::<Position>()
     }
 
     pub fn history_stats(&self) -> HistoryStats {

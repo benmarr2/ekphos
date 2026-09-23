@@ -28,6 +28,7 @@ ureq = "2.9"
 syntect = { version = "5.2", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
 unicode-width = "0.2"
 unicode-segmentation = "1.12"
+regex = "1"
 htmd = "=0.5.0"
 serde_yaml = "0.9"
 bincode = "1.3"
